@@ -53,8 +53,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── 2. Embedded SearXNG (metasearch, multilingual engines) ────────────────
 # The PyPI package "searxng" is an unrelated placeholder; install from the
 # official repository instead. static/** templates/** ship via package_data.
+# SearXNG's setup.py imports searx/__init__.py (needs msgspec…), so deps are
+# installed first and the wheel is built WITHOUT build isolation.
 RUN git clone --depth 1 ${SEARXNG_GIT_URL} /tmp/searxng-src \
-    && pip install --no-cache-dir /tmp/searxng-src \
+    && pip install --no-cache-dir "setuptools>=75" wheel \
+    && pip install --no-cache-dir -r /tmp/searxng-src/requirements.txt \
+    && pip install --no-cache-dir --no-deps --no-build-isolation /tmp/searxng-src \
     && rm -rf /tmp/searxng-src
 
 # Gunicorn serves the SearXNG WSGI app inside this container.
