@@ -220,7 +220,8 @@ fi
 if [ "${START_SEARXNG}" = "true" ]; then
     {
         echo "[program:searxng]"
-        echo "command=gunicorn --workers ${S_WORKERS} --threads ${S_THREADS} --worker-class gthread --timeout 120 --graceful-timeout 30 --bind 127.0.0.1:8888 searx.webapp:app"
+        S_BIND="${SEARXNG_BIND:-127.0.0.1}"
+        echo "command=gunicorn --workers ${S_WORKERS} --threads ${S_THREADS} --worker-class gthread --timeout 120 --graceful-timeout 30 --bind ${S_BIND}:8888 searx.webapp:app"
         echo "directory=/app"
         echo "priority=20"
         echo "autostart=true"

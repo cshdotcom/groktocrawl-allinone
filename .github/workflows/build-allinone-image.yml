@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # 纯文档/编排/env 模板变更不重建镜像
+    paths-ignore:
+      - "**.md"
+      - "docker-compose*.yml"
+      - ".env*"
+      - "docs/**"
   workflow_dispatch:
     inputs:
       platforms:

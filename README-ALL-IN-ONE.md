@@ -27,6 +27,23 @@ Actions 自动构建并发布到 GHCR。单容器即可获得 Firecrawl v2 兼�
 对外只需穿透 **9080（爬虫后台）** 与 **9081（爬虫门户）** 两个端口；搜索、向量库、
 缓存等全部封在容器内部的 `127.0.0.1` 上。
 
+所有宿主端口号都是 `.env` 变量；MCP / 爬虫执行器 / 浏览器 / 语义检索 / 文档解析 /
+内嵌搜索的端口也预留了变量（`MCP_HOST_PORT`、`SCRAPER_HOST_PORT`、`BROWSER_HOST_PORT`、
+`SEMANTIC_HOST_PORT`、`PARSE_HOST_PORT`、`SEARXNG_HOST_PORT`），需要哪个就在
+compose 里取消对应映射行注释，端口号数字直接改 `.env` 即可。
+
+## 镜像体积（实测 GHCR）
+
+| 指标 | 大小 |
+|---|---|
+| `docker pull` 下载量（压缩层, linux/amd64） | ≈ 1045 MiB（约 1 GB） |
+| `docker pull` 下载量（压缩层, linux/arm64） | ≈ 1038 MiB |
+| 解压后磁盘占用 | ≈ 2.5–3 GB |
+| 运行期额外下载（首次启动, 存于数据卷） | BGE-M3 模型 ~2.3 GB + CloakBrowser 二进制 |
+
+多架构 manifest 共 37 层/架构；镜像本身不含任何 AI 模型，嵌入模型按需缓存在
+`$DATA_DIR/huggingface`，不在镜像体积内。
+
 ## 快速开始
 
 ```bash
@@ -86,6 +103,9 @@ docker exec groktocrawl groktocrawl scrape https://example.com
 # 改端口
 AGENT_HOST_PORT=19080
 PORTAL_HOST_PORT=19081
+# 可选端口同例(如想暴露 MCP):
+# MCP_HOST_PORT=9082
+
 
 # 改存储位置（整体搬到 NAS/数据盘）
 DATA_DIR=/mnt/nas/groktocrawl
@@ -112,6 +132,23 @@ API_KEY=<openssl rand -hex 32>
 - `SEARXNG_DISABLED_ENGINES=bing images,wikipedia` → 内嵌搜索剔除引擎；
 - 直接挂载自己的配置：`-v my-settings.yml:/etc/searxng/settings.yml`；
 - MCP 对外：compose 中取消 `MCP_HOST_PORT` 映射注释并设置 `MCP_ALLOWED_HOSTS`。
+
+## 人机验证（验证码）是怎么处理的
+
+内置验证码自动恢复模块位于 scraper-svc（`scraper/captcha.py`，上游 ADR-0044），
+无第三方打码平台依赖：
+
+1. **自动识别**三类主流人机验证：Google reCAPTCHA、hCaptcha、Cloudflare Turnstile；
+2. **自动恢复**按序尝试：被动等待自过 → 点复选框 → 图片九宫格视觉识别
+   （最多 2 轮）；复选框一步零配置即可用；
+3. 图片九宫格题可选接入任一 OpenAI 兼容多模态模型读图作答：
+   `CAPTCHA_VISION_BASE_URL` + `CAPTCHA_VISION_API_KEY` + `CAPTCHA_VISION_MODEL`
+   （三项全填才启用，与主模型 API Key 独立）；
+4. 全部失败时返回 `CAPTCHA_UNRESOLVED` 错误并跳过该页（不会卡死任务）；
+   搭配 `SCRAPER_PROXY_URL`（SOCKS/住宅代理）可显著降低触发率；
+5. Cloudflare 强校验页另可通过外挂 FlareSolverr 增强（`FLARE_SOLVERR_URL`）。
+
+配套反检测能力：CloakBrowser 反指纹浏览器 + Playwright stealth 配置，从源头减少验证码出现概率。
 
 ## 生产部署要点
 

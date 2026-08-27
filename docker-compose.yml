@@ -27,14 +27,23 @@ services:
     hostname: groktocrawl
     restart: unless-stopped
 
-    # ── 端口映射（仅需穿透爬虫后台与门户）─────────────────────────
+    # ── 端口映射（宿主端口全部由 .env 变量控制, 默认只穿透后台+门户）──
     ports:
       - "${AGENT_HOST_PORT:-9080}:8080"    # 爬虫后台 REST API + Swagger(/docs)
       - "${PORTAL_HOST_PORT:-9081}:8081"   # 门户 UI 单搜索框
-      # 如需对外提供 MCP 协议接口, 取消下一行注释:
-      # - "${MCP_HOST_PORT:-9082}:8002"
-      # 调试时可将内部组件映射出来（一般不需要）:
-      # - "127.0.0.1:${SCRAPER_HOST_PORT:-19001}:8001"
+      #
+      # —— 可选端口: 取消对应行注释即生效, 宿主端口号在 .env 中改变量即可 ——
+      #
+      # - "${MCP_HOST_PORT:-9082}:8002"        # MCP 协议(AI 客户端直连)
+      # - "${SCRAPER_HOST_PORT:-19001}:8001"   # 五层爬虫执行器
+      # - "${BROWSER_HOST_PORT:-19012}:8012"   # 无头浏览器会话服务
+      # - "${SEMANTIC_HOST_PORT:-19003}:8003"  # 语义向量检索(BGE-M3)
+      # - "${PARSE_HOST_PORT:-19013}:8013"     # 文档解析(PDF/Office/OCR)
+      # 内嵌搜索 SearXNG 直连(两步: 开启本行 + .env 设 SEARXNG_BIND=0.0.0.0):
+      # - "${SEARXNG_HOST_PORT:-19088}:8888"
+      #
+      # 注: 内嵌 Qdrant(6333)/Valkey(6379) 绑定容器内 127.0.0.1 不支持直接映射;
+      #     需外部访问请改用 QDRANT_URL / VALKEY_URL 指向外部实例并自动让位内嵌组件。
 
     # ── 配置注入 ───────────────────────────────────────────────────
     # .env 中定义的全部变量原样传入容器(entrypoint 只使用其中相关键)。
