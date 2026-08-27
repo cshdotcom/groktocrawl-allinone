@@ -84,6 +84,10 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
 # Headless Chromium shared by scraper-svc and browser-svc
 RUN python -m playwright install --with-deps chromium
 
+# parse-svc optional OCR enrichments (tolerant install mirrors upstream;
+# tabula/camelot omitted — they pull Java/Ghostscript runtime deps)
+RUN pip install --no-cache-dir pytesseract pdf2image 2>/dev/null || true
+
 # ── 4. Embedded Qdrant (official musl static binary) ──────────────────────
 RUN set -eux; \
     arch="${TARGETARCH:-$(uname -m)}"; \
