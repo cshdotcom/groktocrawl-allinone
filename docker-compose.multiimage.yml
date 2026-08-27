@@ -1,0 +1,382 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  slopsearx:
+    image: ghcr.io/magnus919/slopsearx@sha256:91194d146d205b1cf4688c1989da8f5f6b599a9627be23fd1ee7a4e488fda5b7
+    restart: unless-stopped
+    # SLOPSEARX_HOST_PORT moves only the published HOST side; the container
+    # stays on 8080. Lets co-tenant compose stacks on a shared Docker host
+    # (e.g. the CI runner) avoid fixed-port collisions without edits.
+    ports:
+      - "${SLOPSEARX_HOST_PORT:-8081}:8080"
+    environment:
+      - ENGINE_BRAVE_API_KEY=${BRAVE_API_KEY}
+      - VALKEY_URL=redis://valkey:6379/0
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  slopsearx-mcp:
+    image: ghcr.io/magnus919/slopsearx@sha256:91194d146d205b1cf4688c1989da8f5f6b599a9627be23fd1ee7a4e488fda5b7
+    # The MCP companion must never run unauthenticated, but a required-token
+    # guard using the Compose `:?` operator would abort a no-config
+    # `docker compose up` at load time (Compose interpolates the whole file
+    # regardless of profiles). Instead the token defaults to empty and this
+    # wrapper refuses to start the server when it is missing.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$MCP_AUTH_TOKEN" ]; then
+          echo "error: SLOPSEARX_MCP_AUTH_TOKEN must be set to a non-empty value when the mcp profile is enabled" >&2
+          exit 1
+        fi
+        exec python -m slopsearx.mcp
+    restart: unless-stopped
+    # Opt-in: this companion exposes direct SlopSearX search-engine tools, so it
+    # runs only when the `mcp` profile is enabled (`docker compose --profile mcp up`).
+    # Auth is still required: see MCP_AUTH_TOKEN below.
+    profiles:
+      - mcp
+    ports:
+      - "${SLOPSEARX_MCP_PORT:-8007}:8000"
+    environment:
+      - ENGINE_BRAVE_API_KEY=${BRAVE_API_KEY}
+      - VALKEY_URL=redis://valkey:6379/0
+      - MCP_TRANSPORT=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - MCP_AUTH_TOKEN=${SLOPSEARX_MCP_AUTH_TOKEN:-}
+      # Grants delegate defaults to the SlopSearX image, which is secure by
+      # default: specialist grants and targeted sensitive-engine access stay
+      # off until explicitly enabled. Set values in .env to opt in, e.g.
+      # MCP_GRANT_SECURITY=1. An empty value means "no override" upstream.
+      - MCP_GRANT_JOBS=${MCP_GRANT_JOBS:-}
+      - MCP_GRANT_SCIENCE=${MCP_GRANT_SCIENCE:-}
+      - MCP_GRANT_RESEARCH=${MCP_GRANT_RESEARCH:-}
+      - MCP_GRANT_SECURITY=${MCP_GRANT_SECURITY:-}
+      - MCP_TARGETED_SENSITIVE_ALLOWED=${MCP_TARGETED_SENSITIVE_ALLOWED:-}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, os, sys, urllib.request; request=urllib.request.Request('http://127.0.0.1:8000/mcp', data=json.dumps({'jsonrpc':'2.0','id':'healthcheck','method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'compose-healthcheck','version':'1'}}}).encode(), headers={'Accept':'application/json, text/event-stream','Content-Type':'application/json','Authorization':'Bearer ' + os.environ['MCP_AUTH_TOKEN']}); response=urllib.request.urlopen(request, timeout=3); payload=json.loads(next(line[5:].lstrip() for line in (response.readline(65536).decode() for _ in range(8)) if line.startswith('data:'))) if response.headers.get_content_type() == 'text/event-stream' else json.loads(response.read(65536)); sys.exit(0 if isinstance(payload.get('result'), dict) and 'serverInfo' in payload['result'] else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  llm-svc:
+    build:
+      context: .
+      dockerfile: llm-svc/Dockerfile
+    restart: unless-stopped
+    # LLM_HOST_PORT moves only the published HOST side; the container stays
+    # on 8011 (see slopsearx note above re: shared-host port collisions).
+    ports:
+      - "${LLM_HOST_PORT:-8011}:8011"
+    profiles:
+      - fixture
+
+  test-site:
+    build:
+      context: ./test-site
+    restart: unless-stopped
+    # TEST_SITE_HOST_PORT moves only the published HOST side; the container
+    # stays on 8000 (see slopsearx note above re: shared-host collisions).
+    ports:
+      - "${TEST_SITE_HOST_PORT:-8005}:8000"
+    profiles:
+      - fixture
+    environment:
+      - ENABLE_LLMS_TXT=1
+      - ENABLE_MARKDOWN=1
+      - ENABLE_DYNAMIC=1
+      - SITE_NAME=Fixture Site
+
+  slopsearx-fixture:
+    build:
+      context: .
+      dockerfile: slopsearx-fixture/Dockerfile
+    restart: unless-stopped
+    # SLOPSEARX_FIXTURE_HOST_PORT moves only the published HOST side; the
+    # container stays on 8080 (see slopsearx note re: shared-host collisions).
+    ports:
+      - "${SLOPSEARX_FIXTURE_HOST_PORT:-8083}:8080"
+    profiles:
+      - fixture
+    environment:
+      - FIXTURE_SITE_BASE_URL=http://test-site:8000
+      - TWIN_RUN_ID=${TWIN_RUN_ID:-}
+    depends_on:
+      test-site:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3); assert json.load(response)['status'] == 'ok'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tier3-fixture:
+    build:
+      context: ./test-site
+    restart: unless-stopped
+    # TIER3_HOST_PORT moves only the published HOST side; the container stays
+    # on 8000 (see slopsearx note above re: shared-host collisions).
+    ports:
+      - "${TIER3_HOST_PORT:-8006}:8000"
+    profiles:
+      - fixture
+    environment:
+      - ENABLE_LLMS_TXT=0
+      - ENABLE_MARKDOWN=0
+      - ENABLE_DYNAMIC=1
+      - SITE_NAME=Tier 3 Fixture
+
+  scraper-svc:
+    init: true
+    mem_limit: 2500m
+    cpus: 2.0
+    pids_limit: 512
+    build:
+      context: .
+      dockerfile: scraper-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-scraper
+    restart: unless-stopped
+    # SCRAPER_HOST_PORT moves only the published HOST side; the container
+    # stays on 8001 (see slopsearx note re: shared-host port collisions).
+    ports:
+      - "${SCRAPER_HOST_PORT:-8001}:8001"
+    env_file:
+      - .env
+    environment:
+      - VALKEY_HOST=valkey
+      - VALKEY_PORT=6379
+      - VALKEY_DB=0
+    volumes:
+      - cloakbrowser_cache:/root/.cloakbrowser
+
+  browser-svc:
+    mem_limit: 1500m
+    cpus: 1.0
+    pids_limit: 256
+    build:
+      context: .
+      dockerfile: browser-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-browser
+    restart: unless-stopped
+
+  flare-solverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    mem_limit: 1500m
+    cpus: 1.0
+    pids_limit: 256
+    ports:
+      - "${FLARE_SOLVERR_PORT:-8191}:8191"
+    environment:
+      - LOG_LEVEL=${FLARE_SOLVERR_LOG_LEVEL:-info}
+      - CAPTCHA_SOLVER=${FLARE_SOLVERR_CAPTCHA_SOLVER:-none}
+    profiles:
+      - flare-solverr
+
+  semantic-svc:
+    build:
+      context: .
+      dockerfile: semantic-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-semantic
+    restart: unless-stopped
+    profiles:
+      - indexing
+    # SEMANTIC_HOST_PORT moves only the published HOST side; the container
+    # stays on 8003 (see slopsearx note re: shared-host collisions).
+    ports:
+      - "${SEMANTIC_HOST_PORT:-8003}:8003"
+    environment:
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - VECTOR_INDEX_MAX_DOCS=${VECTOR_INDEX_MAX_DOCS:-250000}
+      - EMBED_MODEL_NAME=${EMBED_MODEL_NAME:-BAAI/bge-m3}
+      - EMBED_DIM=${EMBED_DIM:-1024}
+      - ACTIVE_EMBED_MODEL=${ACTIVE_EMBED_MODEL:-v_bge-m3}
+      # Qdrant timeout tuning must pass through from .env or operator
+      # overrides are silently ignored (#588 follow-up). app.py parses
+      # both vars with float() at import time, so the fallbacks must stay
+      # non-empty numeric values equal to today's effective defaults — an
+      # empty ${VAR:-} fallback would inject "" and crash-loop the service.
+      # Drift watch: each '10' fallback duplicates semantic-svc/app.py's
+      # own getenv default; bump both sides together.
+      - QDRANT_QUERY_TIMEOUT=${QDRANT_QUERY_TIMEOUT:-10}
+      - QDRANT_CLIENT_TIMEOUT=${QDRANT_CLIENT_TIMEOUT:-10}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; response = urllib.request.urlopen('http://localhost:8003/health', timeout=5); assert json.load(response)['status'] == 'ok'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 25
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    platform: linux/amd64
+    restart: unless-stopped
+    profiles:
+      - indexing
+    mem_limit: 4g
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - MALLOC_CONF=retain:false
+    healthcheck:
+      # The image provides bash but not curl/wget. Probe Qdrant's live readiness endpoint.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          IFS= read -r status <&3 &&
+          [[ "$${status}" == *200* ]]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  agent-svc:
+    build:
+      context: .
+      dockerfile: agent-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-agent
+    restart: unless-stopped
+    # AGENT_PORT moves only the published HOST side; the container stays on
+    # 8080 (see slopsearx note re: shared-host port collisions).
+    ports:
+      - "${AGENT_PORT:-8080}:8080"
+    env_file:
+      - .env
+    depends_on:
+      valkey:
+        condition: service_healthy
+      slopsearx:
+        condition: service_started
+      scraper-svc:
+        condition: service_started
+    environment:
+      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379/0}
+      - SEARXNG_URL=${SEARXNG_URL:-http://slopsearx:8080}
+      - SCRAPER_URL=${SCRAPER_URL:-http://scraper-svc:8001}
+      - SEMANTIC_URL=${SEMANTIC_URL:-http://semantic-svc:8003}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://llm-svc:8011/v1}
+      - HOST=0.0.0.0
+      - PORT=8080
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent-svc-fixture:
+    build:
+      context: .
+      dockerfile: agent-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-agent
+    restart: unless-stopped
+    profiles:
+      - fixture
+    # AGENT_FIXTURE_HOST_PORT moves only the published HOST side; the
+    # container stays on 8080 (see slopsearx note re: shared-host collisions).
+    ports:
+      - "${AGENT_FIXTURE_HOST_PORT:-8084}:8080"
+    env_file:
+      - .env
+    depends_on:
+      valkey:
+        condition: service_healthy
+      slopsearx-fixture:
+        condition: service_healthy
+      scraper-svc:
+        condition: service_started
+    environment:
+      - VALKEY_URL=redis://valkey:6379/1
+      - TWIN_RUN_ID=${TWIN_RUN_ID:-local}
+      - LLM_BASE_URL=http://llm-svc:8011/v1?run_id=${TWIN_RUN_ID:-local}
+      - SEARXNG_URL=http://slopsearx-fixture:8080
+      - SCRAPER_URL=http://scraper-svc:8001
+      - SEMANTIC_URL=http://semantic-svc:8003
+      - HOST=0.0.0.0
+      - PORT=8080
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./ofelia/config.ini:/etc/ofelia/config.ini:ro
+    depends_on:
+      - agent-svc
+
+  portal-svc:
+    build:
+      context: .
+      dockerfile: portal-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-portal
+    restart: unless-stopped
+    # PORTAL_HOST_PORT moves only the published HOST side; the container
+    # stays on 8081 (see slopsearx note re: shared-host port collisions).
+    ports:
+      - "${PORTAL_HOST_PORT:-8082}:8081"
+    environment:
+      - AGENT_BASE_URL=http://agent-svc:8080
+
+  parse-svc:
+    build:
+      context: .
+      dockerfile: parse-svc/Dockerfile
+    image: ghcr.io/groktopus/groktocrawl-parse
+    restart: unless-stopped
+
+  mcp-svc:
+    build:
+      context: ./mcp-svc
+    image: ghcr.io/groktopus/groktocrawl-mcp
+    ports:
+      - '${MCP_PORT:-8002}:8002'
+    environment:
+      - GROKTOCRAWL_URL=${GROKTOCRAWL_URL:-http://agent-svc:8080}
+      - GROKTOCRAWL_API_KEY=${GROKTOCRAWL_API_KEY:-}
+      - MCP_PORT=${MCP_PORT:-8002}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - SESSION_TTL=${SESSION_TTL:-3600}
+      - SESSION_SWEEP_INTERVAL=${SESSION_SWEEP_INTERVAL:-300}
+      - HTTP_TIMEOUT=${HTTP_TIMEOUT:-60}
+    depends_on:
+      - agent-svc
+    restart: unless-stopped
+    stop_grace_period: 35s
+
+volumes:
+  valkey_data:
+  qdrant_data:
+  hf-cache:
+    external: true
+  cloakbrowser_cache:

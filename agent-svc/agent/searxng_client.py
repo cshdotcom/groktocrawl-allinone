@@ -216,7 +216,11 @@ class SearXNGClient:
             params = {
                 "q": query,
                 "format": "json",
-                "language": "en",
+                # ALLINONE PATCH (cshdotcom/groktocrawl-allinone): upstream
+                # hardcodes "en", which caps non-English relevance. SearXNG
+                # accepts "auto" so engines self-select per-query language.
+                # Override per deployment via SEARCH_LANGUAGE env (e.g. "zh-CN").
+                "language": os.getenv("SEARCH_LANGUAGE", "auto"),
                 "pageno": 1,
             }
             params["categories"] = ",".join(effective_categories)

@@ -62,3 +62,32 @@ Dockerfile*
 
 # Misc
 *.log
+
+# ── All-in-one 追加: 缩小构建上下文, 仅服务代码+编排文件参与构建 ──
+benchmarks/
+evals/
+mutation/
+provenance/
+droid-wiki/
+qa/
+skills/
+test-site/
+slopsearx-fixture/
+sdk-examples/
+tests/
+mcp-svc/tests/
+agent-svc/agent/tests/
+scraper-svc/tests/
+uv.lock
+openapi.json
+CHANGELOG.md
+CI_FAILURE_REPORT.md
+VISION.md
+firecrawl-crawl-feature-research.md
+.github/
+release-please-config.json
+.pre-commit-config.yaml
+.devcontainer/
+.codex/
+.factory/
+gitleaksignore*
