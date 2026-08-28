@@ -83,14 +83,33 @@ docker exec groktocrawl groktocrawl scrape https://example.com
 
 本镜像做了三层相关性保障：
 
-1. **多引擎聚合（SearXNG）**：Google、Bing、DuckDuckGo、Startpage、Wikipedia
-   等引擎并行检索后按评分聚合 —— 各大商业引擎本身就有最强的本地语言排序；
+1. **多引擎聚合（SearXNG）**：默认启用「中国大陆直连可达精选集」（见下节）
+   并行检索后按评分聚合 —— 各大商业引擎本身就有最强的本地语言排序；
 2. **查询语言自动判定**：已修补上游硬编码 `language=en` 的缺陷，
    `SEARCH_LANGUAGE=auto` 时每个请求按其自然语言动态匹配（也支持固定 `zh-CN`
    等）；SearXNG `default_lang=auto` 与之协同；
 3. **BGE-M3 跨语言混合检索**：`research/rerank/hybrid` 管线会把搜索结果下载正文、
    用 BGE-M3 向量与查询跨语言对齐再重排 —— 中文问题也能召回英文权威来源并给出
    排序良好的引用。
+
+### 默认引擎集（大陆直连优化，GHCR `latest` 起生效）
+
+国内服务器**无需代理**即可搜索，且已剔除百度/搜狗等广告密集源，只保留直连可达、
+结果干净的引擎：
+
+| 类别 | 引擎 | 说明 |
+|---|---|---|
+| 通用网页/资讯 | `bing` `bing news` `bing images` `bing videos` | 大陆可达的唯一国际主流全网索引 |
+| 开发者/IT | `github` `mdn` `microsoft learn` `stackoverflow` | 技术文档与问答 |
+| 学术 | `arxiv` `crossref` `semantic scholar` `pubmed` | 全部零广告 |
+| 中文垂直 | `bilibili` `chinaso news` `sina` | 国家搜索-新闻/新浪-新闻 |
+
+被墙引擎（Google/DuckDuckGo/Brave/Startpage/Wikipedia 等）默认不启用，避免每次查询都白等
+超时；海外服务器或已配代理时设 `SEARXNG_ENGINES=all` 即可恢复全部引擎，或用
+`SEARXNG_OUTGOING_PROXY` 只给搜索引擎单独配出站代理。
+
+> 注意：大陆直连下即使引擎可达，数据中心 IP 偶尔仍会触发 Bing 人机校验；
+> 出现整批超时可检查 `searxng.log`。
 
 上游 SlopSearX 镜像不需要了：普通部署内嵌 SearXNG 即可；如果你是 SlopSearX 重度用户，
 设 `SEARXNG_URL=http://your-slopsearx:8080` 就会自动停用内嵌搜索并切换过去。
@@ -129,9 +148,14 @@ API_KEY=<openssl rand -hex 32>
 
 - `EMBED_QDRANT=false` + `QDRANT_URL=http://...` → 用外部向量库；
 - `EMBED_VALKEY=false` + `VALKEY_URL=redis://...` → 用外部 Redis/Valkey；
-- `SEARXNG_DISABLED_ENGINES=bing images,wikipedia` → 内嵌搜索剔除引擎；
-- 直接挂载自己的配置：`-v my-settings.yml:/etc/searxng/settings.yml`；
-- MCP 对外：compose 中取消 `MCP_HOST_PORT` 映射注释并设置 `MCP_ALLOWED_HOSTS`。
+- `SEARXNG_ENGINES=` → 引擎白名单：留空=大陆精选集，`all`=全部，或逗号分隔精确指定；
+- `SEARXNG_DISABLED_ENGINES=bing images` → 在白名单基础上再剔除；
+- `SEARXNG_OUTGOING_PROXY=http://192.168.1.10:7890` → 仅搜索引擎走代理（可恢复被墙引擎）；
+- 直接挂载自己的配置：`-v my-settings.yml:/etc/searxng/settings.yml`
+  （检测到挂载后启动时不会重新生成，可放心自定义）；
+- MCP 对外：compose 中取消 `MCP_HOST_PORT` 映射注释；若设置了 `API_KEY`，
+  MCP 的 `/mcp` 端点与 MCP→agent 内部调用会自动使用同值鉴权
+  （`GROKTOCRAWL_API_KEY` 由 compose 自动接线，客户端侧填同一 key 即可）。
 
 ## 人机验证（验证码）是怎么处理的
 

@@ -75,6 +75,15 @@ services:
       API_KEY: ${API_KEY:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
 
+      # SearXNG 引擎集与出站代理(见 .env 说明; 默认=大陆直连可达精选集)
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
+      SEARXNG_DISABLED_ENGINES: ${SEARXNG_DISABLED_ENGINES:-}
+      SEARXNG_OUTGOING_PROXY: ${SEARXNG_OUTGOING_PROXY:-}
+
+      # MCP 鉴权/转发: 取 API_KEY 同值(MCP 的 /mcp 端点用它鉴权,
+      # 并随内部调用转发给 agent —— 留空则两者均不鉴权)
+      GROKTOCRAWL_API_KEY: ${API_KEY:-}
+
     volumes:
       # ── 存储位置：修改 DATA_DIR 即可整体搬迁, 或单独覆盖每一行 ──
       - "${DATA_DIR:-./groktocrawl-data}/valkey:/data/valkey"
