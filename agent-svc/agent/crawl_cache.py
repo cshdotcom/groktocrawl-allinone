@@ -54,7 +54,7 @@ class CrawlCache:
 
     Usage::
 
-        cache = CrawlCache("redis://valkey:6379/0")
+        cache = CrawlCache("redis://127.0.0.1:6379/0")
 
         # Store a page response
         cache.set("https://example.com", response_dict, ttl_ms=3600000)

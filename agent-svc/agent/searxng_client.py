@@ -82,7 +82,7 @@ def _parse_retry_after(value: str | None) -> float | None:
 class SearXNGClient:
     """Client for the SearXNG search engine JSON API."""
 
-    def __init__(self, base_url: str = "http://searxng:8080", max_searches: int = 5):
+    def __init__(self, base_url: str = "http://127.0.0.1:8888", max_searches: int = 5):
         self.base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
             timeout=15,

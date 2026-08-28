@@ -112,7 +112,8 @@ def create_app() -> FastAPI:
         },
     )
 
-    redis_url = (
+    # VALKEY_URL(由 aio entrypoint 导出)优先; 未设置时按 host/port/db 组装
+    redis_url = os.getenv("VALKEY_URL") or (
         f"redis://{settings.valkey_host}:{settings.valkey_port}/{settings.valkey_db}"
     )
     conn = Redis.from_url(redis_url, decode_responses=True)

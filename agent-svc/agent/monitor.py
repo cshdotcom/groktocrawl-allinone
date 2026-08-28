@@ -23,12 +23,16 @@ from .webhook import ensure_deliverable_webhook_destination
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = "redis://valkey:6379/0"
+# VALKEY_URL 由 aio entrypoint 导出(内嵌时=redis://127.0.0.1:6379/0);
+# 多镜像部署经 compose 注入; 都没有时才回退本机默认值
+REDIS_URL = (
+    os.getenv("VALKEY_URL") or os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0"
+)
 MONITOR_KEY = "monitors"  # hash: monitor_id -> json config
 HISTORY_KEY = "monitor:{}:history"  # list of check results
 SEEN_KEY = "monitor:{}:seen"  # set of seen URLs (search monitors)
 SEARCH_TTL = 90 * 86400  # 90 days TTL for seen URL sets
-SEARXNG_URL = os.getenv("SEARXNG_URL", "http://slopsearx:8080")
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://127.0.0.1:8888")
 
 
 def _now_iso() -> str:
@@ -97,7 +101,7 @@ def _store_check(monitor_id: str, result: dict) -> None:
 async def check_monitor(monitor_id: str, config: dict) -> dict:
     """Run a single monitor check: scrape → diff → notify."""
     url = config["url"]
-    scraper_url = config.get("scraper_url", "http://scraper-svc:8001")
+    scraper_url = config.get("scraper_url", "http://127.0.0.1:8001")
     webhook_url = config.get("webhook")
     previous_content = config.get("last_content", "")
 
@@ -285,7 +289,7 @@ async def run_search_monitor(monitor_id: str, config: dict) -> dict:
 
 
 async def run_monitor(
-    monitor_id: str, scraper_url: str = "http://scraper-svc:8001"
+    monitor_id: str, scraper_url: str = "http://127.0.0.1:8001"
 ) -> dict:
     """Run a single monitor check immediately, regardless of schedule.
 

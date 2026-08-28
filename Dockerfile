@@ -116,6 +116,9 @@ RUN chmod +x /usr/local/bin/scraper-entrypoint
 COPY browser-svc/browser_svc/ browser_svc/
 COPY portal-svc/portal/ portal/
 COPY llm-svc/llm_svc/ llm_svc/
+# parse_svc 包体此前从未被拷入镜像 → uvicorn parse_svc.app:app 直接
+# ModuleNotFoundError 崩溃循环(日志包实锤), 这里补上与其余服务一致的拷贝
+COPY parse-svc/parse_svc/ parse_svc/
 # semantic-svc keeps its upstream flat-module layout (models/auth/metrics…)
 # resolved from cwd=/app exactly like the original per-service image.
 COPY semantic-svc/app.py semantic-svc/auth.py semantic-svc/models.py \

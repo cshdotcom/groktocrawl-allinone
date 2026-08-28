@@ -12,7 +12,7 @@ Usage::
 
     # In app factory:
     app.state.task_tracker.create_background_task(
-        start_analytics_exporter(redis_url="redis://valkey:6379/0")
+        start_analytics_exporter(redis_url="redis://127.0.0.1:6379/0")
     )
 """
 

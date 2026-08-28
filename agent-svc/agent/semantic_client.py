@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class SemanticClient:
     """Client for the semantic-svc embedding and reranking service."""
 
-    def __init__(self, base_url: str = "http://semantic-svc:8003"):
+    def __init__(self, base_url: str = "http://127.0.0.1:8003"):
         self.base_url = base_url.rstrip("/")
         self._client: httpx.AsyncClient | None = None
 

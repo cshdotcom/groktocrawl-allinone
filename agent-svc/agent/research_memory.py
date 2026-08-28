@@ -93,7 +93,7 @@ def _qdrant_url() -> str:
 
 def _semantic_url() -> str:
     """Semantic service URL from env or Docker default."""
-    return os.environ.get("SEMANTIC_URL", "http://semantic-svc:8003").rstrip("/")
+    return os.environ.get("SEMANTIC_URL", "http://127.0.0.1:8003").rstrip("/")
 
 
 def _canonical_json(value: Any) -> Any:
@@ -231,8 +231,8 @@ class ResearchMemory:
     Usage::
 
         memory = ResearchMemory(
-            redis_url="redis://valkey:6379/0",
-            semantic_url="http://semantic-svc:8003",
+            redis_url="redis://127.0.0.1:6379/0",
+            semantic_url="http://127.0.0.1:8003",
             qdrant_url="http://qdrant:6333",
         )
         # Store

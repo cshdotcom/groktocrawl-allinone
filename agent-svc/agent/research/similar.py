@@ -17,9 +17,9 @@ async def run_find_similar(
     url: str,
     limit: int = 10,
     search_mode: str = "qdrant",
-    scraper_url: str = "http://scraper-svc:8001",
-    semantic_url: str = "http://semantic-svc:8003",
-    searxng_url: str = "http://searxng:8080",
+    scraper_url: str = "http://127.0.0.1:8001",
+    semantic_url: str = "http://127.0.0.1:8003",
+    searxng_url: str = "http://127.0.0.1:8888",
 ) -> list[dict]:
     """Find semantically similar pages for a given URL.
 

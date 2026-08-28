@@ -38,7 +38,7 @@ async def upload_parse_file(upload_id: str, request: Request) -> dict[str, Any]:
     """
     from redis import Redis
 
-    r = Redis.from_url("redis://valkey:6379/0", decode_responses=False)
+    r = Redis.from_url("redis://127.0.0.1:6379/0", decode_responses=False)
     meta = r.get(f"parse:upload:{upload_id}")
     if meta is None:
         raise NotFoundError(
@@ -82,7 +82,7 @@ async def parse_file(request: Request) -> Any:
     if upload_id_str:
         from redis import Redis
 
-        r = Redis.from_url("redis://valkey:6379/0", decode_responses=False)
+        r = Redis.from_url("redis://127.0.0.1:6379/0", decode_responses=False)
         data_key = f"parse:upload:{upload_id_str}:data"
         ct_key = f"parse:upload:{upload_id_str}:content_type"
         fn_key = f"parse:upload:{upload_id_str}:filename"

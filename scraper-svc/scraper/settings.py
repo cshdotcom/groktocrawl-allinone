@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 class ScraperSettings(BaseModel):
     """All env-var-driven configuration for scraper-svc."""
 
-    valkey_host: str = Field(default="valkey", alias="VALKEY_HOST")
+    valkey_host: str = Field(default="127.0.0.1", alias="VALKEY_HOST")
     valkey_port: int = Field(default=6379, alias="VALKEY_PORT")
     valkey_db: int = Field(default=0, alias="VALKEY_DB")
 

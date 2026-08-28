@@ -7,6 +7,7 @@ revalidation system.
 import hashlib
 import json
 import logging
+import os
 import time
 from urllib.parse import urlparse
 
@@ -132,7 +133,7 @@ async def _get_cache_client():
     if _cache_client is not None:
         return _cache_client
 
-    redis_url = (
+    redis_url = os.environ.get("VALKEY_URL") or (
         f"redis://{_settings.valkey_host}:{_settings.valkey_port}/{_settings.valkey_db}"
     )
 

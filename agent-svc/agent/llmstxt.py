@@ -264,7 +264,7 @@ def generate_llms_txt(site_url: str, pages: list[dict]) -> str:
 async def generate_llmstxt(
     url: str,
     max_pages: int = 50,
-    scraper_url: str = "http://scraper-svc:8001",
+    scraper_url: str = "http://127.0.0.1:8001",
 ) -> dict:
     """Full pipeline: discover → scrape → compile.
 

@@ -193,7 +193,7 @@ async def delete_monitor_route(monitor_id: str) -> MonitorDeleteResponse:
     if cfg.get("monitor_type") == "search":
         from redis import Redis
 
-        r = Redis.from_url("redis://valkey:6379/0", decode_responses=True)
+        r = Redis.from_url("redis://127.0.0.1:6379/0", decode_responses=True)
         r.delete(f"monitor:{monitor_id}:seen")
     delete_monitor(monitor_id)
     return MonitorDeleteResponse(success=True)

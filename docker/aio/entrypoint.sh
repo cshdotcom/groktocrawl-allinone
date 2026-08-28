@@ -45,6 +45,34 @@ is_local_url() {
     esac
 }
 
+# ── 旧多镜像遗留 URL 清洗(防呆) ──────────────────────────────────────
+# 旧版多镜像 compose 通过 valkey/slopsearx/searxng/scraper-svc 等容器名互联;
+# 单容器内这些主机名不存在 → 搜索空结果 / 缓存静默禁用 / analytics 错误刷屏。
+# auto 模式下检测到这类遗留主机名时自动忽略并回退内嵌默认值。
+# 需要真正的外部组件: 用 IP 或域名(不会被清洗), 或显式设 EMBED_*=false。
+embed_off() { case "${1:-auto}" in false|False|no|No|0) return 0 ;; *) return 1 ;; esac; }
+LEGACY_HOSTS='valkey|redis|searxng|slopsearx|qdrant|scraper-svc|scraper|browser-svc|semantic-svc|parse-svc|agent-svc|portal-svc|mcp-svc|llm-svc|flare-solverr'
+scrub_legacy_url() {
+    local var="$1" val host
+    val="${!var:-}"
+    [ -z "$val" ] && return 0
+    host="$(url_host "$val")"
+    case "$host" in
+        ""|127.0.0.1|localhost|::1|0.0.0.0) return 0 ;;
+    esac
+    if printf '%s\n' "$host" | grep -qE "^(${LEGACY_HOSTS})$"; then
+        log "WARNING: ${var}=${val} 指向旧多镜像容器名 '${host}' — 单容器内不可达, 已忽略并回退内嵌默认值 (真实外部地址请用 IP/域名, 或显式设 EMBED_*=false)"
+        unset "${var}"
+    fi
+}
+embed_off "${EMBED_VALKEY:-auto}"  || scrub_legacy_url VALKEY_URL
+embed_off "${EMBED_QDRANT:-auto}"  || scrub_legacy_url QDRANT_URL
+embed_off "${EMBED_SEARXNG:-auto}" || scrub_legacy_url SEARXNG_URL
+scrub_legacy_url SCRAPER_URL
+scrub_legacy_url BROWSER_SVC_URL
+scrub_legacy_url SEMANTIC_URL
+scrub_legacy_url LLM_BASE_URL
+
 # ── Resolve embedded toggles ───────────────────────────────────────────────
 VALKEY_HOST="${VALKEY_HOST:-127.0.0.1}"
 VALKEY_PORT="${VALKEY_PORT:-6379}"
@@ -189,8 +217,8 @@ lines += [
     "  public_instance: false",
     "",
     "search:",
-    "  safe_search: 0",
-    "  autocomplete: 'google'",
+    "  safe_search: 1         # moderate: 过滤不适宜内容(0=off 1=moderate 2=strict)",
+    "  autocomplete: ''       # 大陆直连 google suggest 不可达, 关闭自动补全",
     "  default_lang: 'auto'    # per-query language autodetect → high CJK relevance",
     "  formats: [html, json, csv, rss]",
     "",
@@ -359,9 +387,30 @@ if [ "${START_LLM_FIXTURE}" = "true" ]; then
 fi
 
 # Replaces the upstream `ofelia` sidecar: run monitor checks in-process.
+# 注意: 不能走 emit_program —— 它用 ${*} 拼 command= 会丢掉引号, supervisor 对
+# command= 做 shlex 拆词后 bash -c 只会拿到 "sleep" 一个词(即 sleep: missing
+# operand 直接 FATAL)。这里整段脚本用单引号包裹写入 conf。
 if [ "${START_MONITORS}" = "true" ]; then
-    emit_program monitor-loop 70 "/var/log/groktocrawl/monitor-loop.log" \
-        /bin/bash -c "sleep 300; while :; do python3 -m agent.monitor check_all; sleep \"\${MONITOR_INTERVAL_SECONDS:-600}\"; done"
+    {
+        echo "[program:monitor-loop]"
+        echo "command=/bin/bash -c 'sleep 300; while :; do python3 -m agent.monitor check_all; sleep \${MONITOR_INTERVAL_SECONDS:-600}; done'"
+        echo "directory=/app"
+        echo "priority=70"
+        echo "autostart=true"
+        echo "autorestart=unexpected"
+        echo "exitcodes=0"
+        echo "startsecs=5"
+        echo "startretries=15"
+        echo "stopsignal=TERM"
+        echo "stopasgroup=true"
+        echo "killasgroup=true"
+        echo "stopwaitsecs=25"
+        echo "redirect_stderr=true"
+        echo "stdout_logfile=/var/log/groktocrawl/monitor-loop.log"
+        echo "stdout_logfile_maxbytes=20MB"
+        echo "stdout_logfile_backups=3"
+        echo "environment=PYTHONPATH=\"/app\",PYTHONUNBUFFERED=\"1\""
+    } > "${CONF_DIR}/monitor-loop.conf"
 fi
 
 log "supervisor programs generated:"
