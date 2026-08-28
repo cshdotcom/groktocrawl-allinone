@@ -187,8 +187,8 @@ async def check_all(
     valkey_url: str = "redis://127.0.0.1:6379/0",
     searxng_url: str = "http://127.0.0.1:8888",
     scraper_url: str = "http://127.0.0.1:8001",
-    browser_url: str = "http://browser-svc:8012",
-    portal_url: str = "http://portal-svc:8081",
+    browser_url: str = "http://127.0.0.1:8012",
+    portal_url: str = "http://127.0.0.1:8081",
 ) -> dict[str, Any]:
     """Probe all dependencies and return aggregated health.
 

@@ -7,6 +7,7 @@ Each session is an isolated Chromium instance with its own context.
 import asyncio
 import json
 import logging
+import os
 import random
 import time
 import uuid
@@ -213,6 +214,18 @@ async def startup():
     _br_settings = load_settings()
     valkey_host = _br_settings.valkey_host
     valkey_port = _br_settings.valkey_port
+    # VALKEY_URL(aio entrypoint 导出, 如 redis://127.0.0.1:6379/0)优先;
+    # 未设置时按 VALKEY_HOST/VALKEY_PORT(默认 127.0.0.1)组装。
+    _vurl = (os.environ.get("VALKEY_URL") or "").strip()
+    if _vurl:
+        try:
+            from urllib.parse import urlsplit
+
+            _sp = urlsplit(_vurl if "://" in _vurl else f"redis://{_vurl}")
+            valkey_host = _sp.hostname or valkey_host
+            valkey_port = _sp.port or valkey_port
+        except Exception:  # pragma: no cover - malformed URL, keep defaults
+            logger.warning("Invalid VALKEY_URL %r — falling back to host/port", _vurl)
     try:
         import redis.asyncio as aioredis
 

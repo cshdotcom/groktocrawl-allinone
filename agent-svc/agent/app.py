@@ -225,8 +225,8 @@ def create_app() -> FastAPI:
             valkey_url=app.state.valkey_url,
             searxng_url=app.state.searxng_url,
             scraper_url=app.state.scraper_url,
-            browser_url="http://browser-svc:8012",
-            portal_url="http://portal-svc:8081",
+            browser_url=os.environ.get("BROWSER_SVC_URL", "http://127.0.0.1:8012"),
+            portal_url=os.environ.get("PORTAL_SVC_URL", "http://127.0.0.1:8081"),
         )
         # Record health check outcomes as metrics
         dh_gauge = METRICS.gauge(

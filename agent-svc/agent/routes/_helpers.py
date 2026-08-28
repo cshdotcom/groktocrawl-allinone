@@ -11,7 +11,10 @@ from fastapi import Request
 logger = logging.getLogger(__name__)
 
 # ── Browser service URL ───────────────────────────────────────
-BROWSER_SVC_URL = "http://browser-svc:8012"
+# 单容器(all-in-one)内 browser-svc 固定监听 127.0.0.1:8012, 入口点亦导出同名
+# 环境变量; 外部实例用 BROWSER_SVC_URL 覆盖。旧多镜像默认值 browser-svc:8012
+# 在单容器内不可解析(DNS Name not known → /v2/browser 500), 故必须从环境读取。
+BROWSER_SVC_URL = os.environ.get("BROWSER_SVC_URL", "http://127.0.0.1:8012")
 
 
 def _get_client_ip(request: Request) -> str:

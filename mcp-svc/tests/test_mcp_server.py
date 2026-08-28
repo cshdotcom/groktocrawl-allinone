@@ -1376,7 +1376,7 @@ class TestEnvVarDefaults:
     """VAL-MCP-L03: Environment variable defaults match specification."""
 
     def test_api_url_default(self, monkeypatch):
-        """GROKTOCRAWL_URL defaults to http://agent-svc:8000."""
+        """GROKTOCRAWL_URL defaults to http://127.0.0.1:8080 (single-container)."""
         monkeypatch.delenv("GROKTOCRAWL_URL", raising=False)
         monkeypatch.delenv("GROKTOCRAWL_API_URL", raising=False)
         # Reimport the module to pick up new env
@@ -1385,7 +1385,7 @@ class TestEnvVarDefaults:
         import mcp_server
 
         importlib.reload(mcp_server)
-        assert mcp_server.API_URL == "http://agent-svc:8000"
+        assert mcp_server.API_URL == "http://127.0.0.1:8080"
 
     def test_http_timeout_default(self, monkeypatch):
         """HTTP_TIMEOUT defaults to 60."""

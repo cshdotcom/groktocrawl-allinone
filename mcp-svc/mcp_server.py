@@ -33,7 +33,9 @@ logger = logging.getLogger("grokto_crawl.mcp")
 
 API_URL: str = os.environ.get(
     "GROKTOCRAWL_URL",
-    os.environ.get("GROKTOCRAWL_API_URL", "http://agent-svc:8000"),
+    # 兜底默认指向单容器(all-in-one)内 agent; 旧多镜像名 agent-svc 在
+    # 单容器内不可解析, 仅当用户显式设置 GROKTOCRAWL_API_URL 时才会覆盖。
+    os.environ.get("GROKTOCRAWL_API_URL", "http://127.0.0.1:8080"),
 )
 API_KEY: str | None = os.environ.get("GROKTOCRAWL_API_KEY") or None
 PORT: int = int(os.environ.get("MCP_PORT", "8002"))

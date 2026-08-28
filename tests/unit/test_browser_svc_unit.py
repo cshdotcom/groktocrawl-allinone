@@ -481,9 +481,9 @@ class TestBrowserSettings:
     """BrowserSettings parses env vars correctly."""
 
     def test_default_values(self):
-        """Default VALKEY_HOST is 'valkey', VALKEY_PORT is 6379."""
+        """Default VALKEY_HOST is '127.0.0.1' (single-container), VALKEY_PORT is 6379."""
         settings = BrowserSettings()
-        assert settings.valkey_host == "valkey"
+        assert settings.valkey_host == "127.0.0.1"
         assert settings.valkey_port == 6379
 
     def test_custom_valkey_host(self, monkeypatch):
@@ -497,7 +497,7 @@ class TestBrowserSettings:
         """VALKEY_PORT env var is picked up."""
         monkeypatch.setenv("VALKEY_PORT", "6380")
         settings = BrowserSettings.model_validate(dict(os.environ))
-        assert settings.valkey_host == "valkey"
+        assert settings.valkey_host == "127.0.0.1"
         assert settings.valkey_port == 6380
 
     def test_custom_both(self, monkeypatch):
@@ -517,7 +517,7 @@ class TestLoadSettings:
         monkeypatch.delenv("VALKEY_HOST", raising=False)
         monkeypatch.delenv("VALKEY_PORT", raising=False)
         settings = load_settings()
-        assert settings.valkey_host == "valkey"
+        assert settings.valkey_host == "127.0.0.1"
         assert settings.valkey_port == 6379
 
     def test_load_settings_custom(self, monkeypatch):
