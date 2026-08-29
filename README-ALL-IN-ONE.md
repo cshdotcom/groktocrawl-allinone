@@ -155,6 +155,10 @@ API_KEY=<openssl rand -hex 32>
 
 细分开关：
 
+- `BROWSER_NAVIGATE_TIMEOUT_MS=30000` → 浏览器动作（navigate/click/wait 等）
+  的默认超时毫秒，与 Playwright 官方默认一致。个别慢站（首字节慢、或阻塞脚本
+  指向被墙域）navigate 报 `Timeout xx ms exceeded` 时调大，如 `60000`；
+  也可以在单次工具调用里传 `timeout` 参数临时覆盖（毫秒）；
 - `EMBED_QDRANT=false` + `QDRANT_URL=http://...` → 用外部向量库；
 - `EMBED_VALKEY=false` + `VALKEY_URL=redis://...` → 用外部 Redis/Valkey；
 - `SEARXNG_ENGINES=` → 引擎白名单：留空=大陆精选集，`all`=全部，或逗号分隔精确指定；

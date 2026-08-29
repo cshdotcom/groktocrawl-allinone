@@ -910,7 +910,9 @@ async def browser_execute(
         selector: CSS selector (click/type/select actions).
         text: Text to type (type/write actions).
         script: JavaScript source (executeScript action).
-        timeout: Action timeout in milliseconds (default 10000).
+        timeout: Action timeout in milliseconds (default 30000; server-side
+            default is tunable via the BROWSER_NAVIGATE_TIMEOUT_MS env var).
+            Slow sites that exceed the default may need e.g. 60000.
         wait_until: Navigation wait condition for navigate: domcontentloaded
             (default), load, commit, or networkidle. Prefer domcontentloaded
             for portal sites with continuous analytics traffic.

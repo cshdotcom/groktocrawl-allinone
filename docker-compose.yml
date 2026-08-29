@@ -75,6 +75,9 @@ services:
       API_KEY: ${API_KEY:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
 
+      # 浏览器动作(navigate/click/wait...)默认超时毫秒; 慢站建议 60000
+      BROWSER_NAVIGATE_TIMEOUT_MS: ${BROWSER_NAVIGATE_TIMEOUT_MS:-30000}
+
       # SearXNG 引擎集与出站代理(见 .env 说明; 默认=大陆直连可达精选集)
       SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
       SEARXNG_DISABLED_ENGINES: ${SEARXNG_DISABLED_ENGINES:-}
