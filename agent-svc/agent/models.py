@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
+from .settings import load_settings
+
 # ── Valid scrape format values ──────────────────────────────────
 VALID_SCRAPE_FORMATS: frozenset[str] = frozenset(
     {
@@ -959,7 +961,14 @@ class BrowserExecuteRequest(BaseModel):
     selector: str | None = None
     text: str | None = None
     script: str | None = None
-    timeout: int = 10000
+    timeout: int = Field(
+        default_factory=lambda: load_settings().browser_navigate_timeout_ms,
+        ge=1000,
+        description=(
+            "Per-action timeout in milliseconds. Default comes from "
+            "BROWSER_NAVIGATE_TIMEOUT_MS (30000 unless overridden)."
+        ),
+    )
     wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = Field(
         default="domcontentloaded",
         description=(

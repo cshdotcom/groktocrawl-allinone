@@ -68,6 +68,9 @@ services:
       API_KEY: ${API_KEY:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
 
+      # 浏览器动作(navigate/click/wait...)默认超时毫秒; 慢站建议 60000
+      BROWSER_NAVIGATE_TIMEOUT_MS: ${BROWSER_NAVIGATE_TIMEOUT_MS:-30000}
+
       # MCP 鉴权/转发: 取 API_KEY 同值(MCP 的 /mcp 端点用它鉴权,
       # 并随内部调用转发给 agent —— 留空则两者均不鉴权)
       GROKTOCRAWL_API_KEY: ${API_KEY:-}

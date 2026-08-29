@@ -487,7 +487,8 @@ class TestBrowserModels:
         from agent.models import BrowserExecuteRequest
 
         r = BrowserExecuteRequest(action="navigate", url="https://x.com")
-        assert r.timeout == 10000
+        # default now comes from BROWSER_NAVIGATE_TIMEOUT_MS (30000 unless overridden)
+        assert r.timeout == 30000
 
     def test_browser_execute_response(self):
         from agent.models import BrowserExecuteResponse

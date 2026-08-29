@@ -406,7 +406,8 @@ class TestBrowserExecuteRequest:
         assert req.selector is None
         assert req.text is None
         assert req.script is None
-        assert req.timeout == 10000
+        # default now comes from BROWSER_NAVIGATE_TIMEOUT_MS (30000 unless overridden)
+        assert req.timeout == 30000
 
     def test_navigate_request(self):
         """Navigate action with URL."""

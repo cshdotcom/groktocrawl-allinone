@@ -16,7 +16,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from playwright.async_api import async_playwright
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common.logging import setup_logging
 from common.metrics import METRICS
@@ -189,7 +189,14 @@ class BrowserExecuteRequest(BaseModel):
     selector: str | None = None
     text: str | None = None
     script: str | None = None
-    timeout: int = 10000
+    timeout: int = Field(
+        default_factory=lambda: load_settings().navigate_timeout_ms,
+        ge=1000,
+        description=(
+            "Per-action timeout in milliseconds. Default comes from "
+            "BROWSER_NAVIGATE_TIMEOUT_MS (30000 unless overridden)."
+        ),
+    )
     # Playwright page.goto wait condition. Default is "domcontentloaded": the
     # previous hardcoded "networkidle" (500ms of zero network traffic) almost
     # never settles on modern portals (analytics/ads keep firing requests) and
