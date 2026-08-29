@@ -2,13 +2,13 @@
 # ============================================================================
 # GroktoCrawl all-in-one entrypoint
 #
+# LITE edition — no embedded SearXNG / Qdrant / semantic-svc / portal.
+#
 # Responsibilities:
-#   1. Resolve EMBED_* toggles (auto mode: start an embedded component only
-#      when no external URL has been configured for it).
-#   2. Generate /etc/searxng/settings.yml (private instance, JSON API on,
-#      multilingual relevance defaults, optional engine disable list).
-#   3. Emit supervisor program files for every component that should run.
-#   4. exec supervisord -n  (PID1 handles signals + zombie reaping).
+#   1. Resolve the EMBED_VALKEY toggle (auto mode: start embedded Valkey only
+#      when no external URL has been configured).
+#   2. Emit supervisor program files for every component that should run.
+#   3. exec supervisord -n  (PID1 handles signals + zombie reaping).
 #
 # Every upstream env var passes through unchanged — extra services pick their
 # own settings up from the environment (docker-compose env_file: .env).
@@ -19,8 +19,7 @@ LOGDIR=/var/log/groktocrawl
 DATA_ROOT="${GROKTOCRAWL_DATA:-/data}"
 CONF_DIR=/etc/supervisor/conf.d
 
-mkdir -p "$DATA_ROOT/valkey" "$DATA_ROOT/qdrant" "$DATA_ROOT/huggingface" \
-         "$DATA_ROOT/cloakbrowser" "$DATA_ROOT/config" \
+mkdir -p "$DATA_ROOT/valkey" "$DATA_ROOT/cloakbrowser" \
          "$LOGDIR" "$CONF_DIR"
 
 log() { printf '[groktocrawl-aio] %s\n' "$*" >&2; }
@@ -66,11 +65,8 @@ scrub_legacy_url() {
     fi
 }
 embed_off "${EMBED_VALKEY:-auto}"  || scrub_legacy_url VALKEY_URL
-embed_off "${EMBED_QDRANT:-auto}"  || scrub_legacy_url QDRANT_URL
-embed_off "${EMBED_SEARXNG:-auto}" || scrub_legacy_url SEARXNG_URL
 scrub_legacy_url SCRAPER_URL
 scrub_legacy_url BROWSER_SVC_URL
-scrub_legacy_url SEMANTIC_URL
 scrub_legacy_url LLM_BASE_URL
 
 # ── Resolve embedded toggles ───────────────────────────────────────────────
@@ -81,9 +77,6 @@ export VALKEY_URL="${VALKEY_URL:-redis://${VALKEY_HOST}:${VALKEY_PORT}/${VALKEY_
 
 export SCRAPER_URL="${SCRAPER_URL:-http://127.0.0.1:8001}"
 export BROWSER_SVC_URL="${BROWSER_SVC_URL:-http://127.0.0.1:8012}"
-export SEMANTIC_URL="${SEMANTIC_URL:-http://127.0.0.1:8003}"
-export QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
-export SEARXNG_URL="${SEARXNG_URL:-http://127.0.0.1:8888}"
 export LLM_BASE_URL="${LLM_BASE_URL:-http://127.0.0.1:8011/v1}"
 export AGENT_BASE_URL="${AGENT_BASE_URL:-http://127.0.0.1:8080}"
 export GROKTOCRAWL_URL="${GROKTOCRAWL_URL:-http://127.0.0.1:8080}"
@@ -105,16 +98,6 @@ if embed_enabled "${EMBED_VALKEY:-auto}" "$(is_local_url "${VALKEY_URL}" && echo
 else
     START_VALKEY=false
 fi
-if embed_enabled "${EMBED_QDRANT:-auto}" "$(is_local_url "${QDRANT_URL}" && echo true || echo false)"; then
-    START_QDRANT=true
-else
-    START_QDRANT=false
-fi
-if embed_enabled "${EMBED_SEARXNG:-auto}" "$(is_local_url "${SEARXNG_URL}" && echo true || echo false)"; then
-    START_SEARXNG=true
-else
-    START_SEARXNG=false
-fi
 # LLM fixture: only meaningful for zero-config demos. Start when no external
 # OpenAI-compatible endpoint was given and it is not explicitly disabled.
 START_LLM_FIXTURE=false
@@ -129,118 +112,7 @@ case "${MONITOR_SCHEDULER_ENABLED:-true}" in
     true|True|yes|Yes|1) START_MONITORS=true ;;
 esac
 
-log "embedded components: valkey=${START_VALKEY} qdrant=${START_QDRANT} searxng=${START_SEARXNG} llm-fixture=${START_LLM_FIXTURE} monitor-loop=${START_MONITORS}"
-
-# ── SearXNG settings generation ────────────────────────────────────────────
-S_WORKERS="${SEARXNG_WORKERS:-2}"
-S_THREADS="${SEARXNG_THREADS:-12}"
-if [ "${START_SEARXNG}" = "true" ]; then
-    mkdir -p /etc/searxng
-    # 用户 bind-mount 了 /etc/searxng 或 settings.yml 时跳过生成, 避免每次启动覆盖用户配置
-    if grep -qsE " /etc/searxng(/settings\.yml)? " /proc/mounts; then
-        log "bind-mounted searxng settings detected -- skip auto-generation (user-managed)"
-    else
-        SECRET_FILE="$DATA_ROOT/config/searxng_secret_key"
-        if [ ! -s "$SECRET_FILE" ]; then
-            python3 -c 'import secrets,sys; open(sys.argv[1],"w").write(secrets.token_hex(32))' "$SECRET_FILE"
-            chmod 600 "$SECRET_FILE"
-        fi
-        S_KEY=$(cat "$SECRET_FILE")
-
-        python3 - "$S_KEY" <<'PYEOF'
-import os
-import sys
-
-key = sys.argv[1]
-
-# ── 引擎白名单 ───────────────────────────────────────────────
-# SEARXNG_ENGINES 语义:
-#   ""(空)   → 使用下面的中国大陆直连可达精选集(默认)
-#   "all"    → 保留 SearXNG 全部默认引擎(海外服务器/自备代理场景)
-#   "a,b,c"  → 精确使用这些引擎(名字须存在于 SearXNG 默认注册表)
-# 白名单中的引擎一律强制启用(disabled:false), 因此默认关闭的引擎
-# (crossref/bilibili/microsoft learn/chinaso news/sina 等)同样会生效。
-CHINA_DEFAULT_ENGINES = [
-    # 通用网页与资讯(bing: 大陆可达的唯一国际主流全网索引)
-    "bing", "bing news", "bing images", "bing videos",
-    # 开发者 / IT
-    "github", "mdn", "microsoft learn", "stackoverflow",
-    # 学术(零广告, 直连可达)
-    "arxiv", "crossref", "semantic scholar", "pubmed",
-    # 中文垂直源(bilibili/国家搜索新闻/新浪新闻)
-    "bilibili", "chinaso news", "sina",
-]
-
-engines_env = os.getenv("SEARXNG_ENGINES", "").strip()
-disabled = [e.strip() for e in os.getenv("SEARXNG_DISABLED_ENGINES", "").split(",") if e.strip()]
-proxy = os.getenv("SEARXNG_OUTGOING_PROXY", "").strip()
-
-if engines_env == "all":
-    keep_only = []
-elif engines_env:
-    keep_only = [e.strip() for e in engines_env.split(",") if e.strip()]
-else:
-    keep_only = list(CHINA_DEFAULT_ENGINES)
-
-lines = [
-    "# AUTO-GENERATED by groktocrawl-aio-entrypoint — do not edit here.",
-    "# 完全自定义: bind-mount 覆盖 /etc/searxng/settings.yml (检测到挂载即跳过生成),",
-    "# 或在 .env 用 SEARXNG_ENGINES / SEARXNG_DISABLED_ENGINES / SEARXNG_OUTGOING_PROXY 控制。",
-    "",
-]
-
-if keep_only or disabled:
-    lines.append("use_default_settings:")
-    lines.append("  engines:")
-    if keep_only:
-        lines.append("    keep_only:")
-        lines.extend(f'      - "{e}"' for e in keep_only)
-    if disabled:
-        lines.append("    remove:")
-        lines.extend(f"      - {e}" for e in disabled)
-else:
-    lines.append("use_default_settings: true")
-
-if keep_only:
-    lines.append("")
-    lines.append("engines:")
-    for e in keep_only:
-        lines.append(f'  - name: "{e}"')
-        lines.append("    disabled: false")
-
-lines += [
-    "",
-    "server:",
-    f"  secret_key: '{key}'",
-    "  limiter: false          # private single-user instance: no bot-detection throttle",
-    "  image_proxy: true",
-    "  public_instance: false",
-    "",
-    "search:",
-    "  safe_search: 1         # moderate: 过滤不适宜内容(0=off 1=moderate 2=strict)",
-    "  autocomplete: ''       # 大陆直连 google suggest 不可达, 关闭自动补全",
-    "  default_lang: 'auto'    # per-query language autodetect → high CJK relevance",
-    "  formats: [html, json, csv, rss]",
-    "",
-    "ui:",
-    "  static_use_hash: true",
-]
-
-# 可选出站代理: 仅作用于 SearXNG 引擎出站请求(httpx), 不影响容器内服务互联
-if proxy:
-    lines += [
-        "",
-        "outgoing:",
-        "  proxies:",
-        "    all://:",
-        f"      - {proxy}",
-    ]
-
-open("/etc/searxng/settings.yml", "w").write("\n".join(lines) + "\n")
-PYEOF
-        log "generated /etc/searxng/settings.yml"
-    fi
-fi
+log "embedded components: valkey=${START_VALKEY} llm-fixture=${START_LLM_FIXTURE} monitor-loop=${START_MONITORS} (lite: no qdrant/searxng/semantic/portal)"
 
 # ── Supervisor program emission helpers ────────────────────────────────────
 emit_program() { # name priority stdout_logfile command...
@@ -274,53 +146,6 @@ if [ "${START_VALKEY}" = "true" ]; then
         --dir "$DATA_ROOT/valkey" --appendonly yes --appendfsync everysec --save ""
 fi
 
-if [ "${START_QDRANT}" = "true" ]; then
-    {
-        echo "[program:qdrant]"
-        echo "command=/opt/qdrant/qdrant"
-        echo "directory=${DATA_ROOT}/qdrant"
-        echo "priority=20"
-        echo "autostart=true"
-        echo "autorestart=unexpected"
-        echo "exitcodes=0"
-        echo "startsecs=5"
-        echo "startretries=15"
-        echo "stopsignal=TERM"
-        echo "stopasgroup=true"
-        echo "killasgroup=true"
-        echo "stopwaitsecs=25"
-        echo "redirect_stderr=true"
-        echo "stdout_logfile=/var/log/groktocrawl/qdrant.log"
-        echo "stdout_logfile_maxbytes=20MB"
-        echo "stdout_logfile_backups=3"
-        echo "environment=QDRANT__SERVICE__HOST=\"127.0.0.1\",QDRANT__SERVICE__HTTP_PORT=\"6333\",QDRANT__STORAGE__STORAGE_PATH=\"${DATA_ROOT}/qdrant/storage\",QDRANT__STORAGE__SNAPSHOTS_PATH=\"${DATA_ROOT}/qdrant/snapshots\""
-    } > "${CONF_DIR}/qdrant.conf"
-fi
-
-if [ "${START_SEARXNG}" = "true" ]; then
-    {
-        echo "[program:searxng]"
-        S_BIND="${SEARXNG_BIND:-127.0.0.1}"
-        echo "command=gunicorn --workers ${S_WORKERS} --threads ${S_THREADS} --worker-class gthread --timeout 120 --graceful-timeout 30 --bind ${S_BIND}:8888 searx.webapp:app"
-        echo "directory=/app"
-        echo "priority=20"
-        echo "autostart=true"
-        echo "autorestart=unexpected"
-        echo "exitcodes=0"
-        echo "startsecs=5"
-        echo "startretries=15"
-        echo "stopsignal=TERM"
-        echo "stopasgroup=true"
-        echo "killasgroup=true"
-        echo "stopwaitsecs=25"
-        echo "redirect_stderr=true"
-        echo "stdout_logfile=/var/log/groktocrawl/searxng.log"
-        echo "stdout_logfile_maxbytes=20MB"
-        echo "stdout_logfile_backups=3"
-        echo "environment=PYTHONPATH=\"/app\",SEARXNG_SETTINGS_PATH=\"/etc/searxng/settings.yml\",SEARX_SETTINGS_PATH=\"/etc/searxng/settings.yml\""
-    } > "${CONF_DIR}/searxng.conf"
-fi
-
 # ── Core GroktoCrawl services ──────────────────────────────────────────────
 emit_program parse-svc 30 "/var/log/groktocrawl/parse-svc.log" \
     python -m uvicorn parse_svc.app:app --host 0.0.0.0 --port 8013
@@ -351,14 +176,10 @@ emit_program browser-svc 30 "/var/log/groktocrawl/browser-svc.log" \
     echo "environment=PYTHONPATH=\"/app\",PYTHONUNBUFFERED=\"1\",HOME=\"/root\""
 } > "${CONF_DIR}/scraper-svc.conf"
 
-emit_program semantic-svc 40 "/var/log/groktocrawl/semantic-svc.log" \
-    python -m uvicorn app:app --host 0.0.0.0 --port 8003
 
 emit_program agent-svc 50 "/var/log/groktocrawl/agent-svc.log" \
     python -m uvicorn agent.app:app --host 0.0.0.0 --port 8080
 
-emit_program portal-svc 60 "/var/log/groktocrawl/portal-svc.log" \
-    python -m uvicorn portal.app:app --host 0.0.0.0 --port 8081
 
 {
     echo "[program:mcp-svc]"

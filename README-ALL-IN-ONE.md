@@ -1,48 +1,59 @@
-# GroktoCrawl All-in-One（全功能单镜像版）
+# GroktoCrawl All-in-One（轻量版 LITE 单镜像）
 
 > 上游项目: [groktopus/groktocrawl](https://github.com/groktopus/groktocrawl) · 本仓库:
-> **cshdotcom/groktocrawl-allinone** · 镜像: `ghcr.io/cshdotcom/groktocrawl-allinone`
+> **cshdotcom/groktocrawl-allinone** (`lite` 分支) · 镜像: `ghcr.io/cshdotcom/groktocrawl-allinone:lite`
 
-把上游 7 个服务镜像 + 3 个基础组件镜像**合并为一个全功能 Docker 镜像**，由 GitHub
-Actions 自动构建并发布到 GHCR。单容器即可获得 Firecrawl v2 兼容的完整爬虫/搜索/
-研究平台能力。
+> **⚠️ 这是 LITE 轻量版（lite 分支）**。与 main 分支全功能版的区别：
+>
+> | | full (main, `:latest`) | **lite (本分支, `:lite`)** |
+> |---|---|---|
+> | scrape / crawl / map / extract / llmstxt / parse | ✅ | ✅ |
+> | browser 会话 + MCP 全套对应工具 | ✅ | ✅ |
+> | monitor 定时巡检 | ✅ scrape+search 型 | ✅ 仅 scrape 型 |
+> | 内嵌 SearXNG 搜索（`/v2/search`） | ✅ | ❌ 已移除 |
+> | 内嵌 Qdrant + semantic-svc（BGE-M3 向量检索） | ✅ | ❌ 已移除 |
+> | 自主研究 Agent（`/v2/agent` / `/v2/answer` / 研究记忆） | ✅ | ❌ 已移除 |
+> | 门户 Web UI（9081） | ✅ | ❌ 已移除（配 OpenWebUI 等外部 Agent 更合适） |
+> | 常驻内存 | ≈ 3.5–5 GB（BGE-M3 加载后 2–3GB） | **≈ 1–1.5 GB** |
+> | 镜像解压体积 | ≈ 2.5–3 GB | **≈ 1.5 GB 量级** |
+>
+> `lite` 分支推送后 CI 自动产出 `:lite` 与 `:sha-<short>` 两个 tag；`latest` 永远
+> 只跟随 main 分支的全功能版。想用搜索/语义检索/研究 Agent，请拉 `:latest`。
+
+把上游服务镜像合并为**单个轻量 Docker 镜像**：砍掉搜索/向量库/研究 Agent 三大
+内存大户后，单容器专注做好 Firecrawl v2 兼容的**抓取与浏览器自动化**能力，由
+GitHub Actions 自动构建并发布到 GHCR。
 
 ## 一个容器里有什么
 
 | 组件 | 端口 | 暴露 | 说明 |
 |---|---|---|---|
 | agent-svc（爬虫后台） | 8080 | ✅ `AGENT_HOST_PORT` | Firecrawl 兼容 REST API、异步任务、Swagger `/docs` |
-| portal-svc（爬虫门户） | 8081 | ✅ `PORTAL_HOST_PORT` | 单搜索框 Web UI |
 | scraper-svc（五层爬虫） | 8001 | ❌ 仅内部 | curl_cffi / Playwright Chromium / CloakBrowser 反检测 |
 | browser-svc | 8012 | ❌ 仅内部 | 无头浏览器会话服务 |
-| semantic-svc | 8003 | ❌ 仅内部 | BGE-M3 多语言向量嵌入 + rerank + 向量索引 |
 | parse-svc | 8013 | ❌ 仅内部 | PDF / Office 文档解析（poppler + tesseract 中英文 OCR） |
-| llm-svc（离线演示） | 8011 | ❌ 仅内部 | 零配置 fixture LLM，接外部大模型后自动闲置 |
+| llm-svc（离线演示） | 8011 | ❌ 仅内部 | 零配置 fixture LLM（extract/llmstxt 用），接外部大模型后自动闲置 |
 | mcp-svc | 8002 | 可选 | MCP 协议服务器（compose 注释行开启映射） |
-| SearXNG 内嵌搜索 | 8888 | ❌ 仅内部 | Google/Bing/DuckDuckGo/startpage/wikipedia 等聚合 |
-| Qdrant 内嵌向量库 | 6333 | ❌ 仅内部 | 语义检索持久化索引（官方 musl 静态二进制） |
 | Valkey 内嵌缓存 | 6379 | ❌ 仅内部 | 任务队列 + 抓取缓存（redis-server，AOF 持久化） |
-| Monitor 巡检 | — | — | 每 10 分钟检查 monitors（替代上游 ofelia 容器） |
+| Monitor 巡检 | — | — | 每 10 分钟检查 scrape 型 monitors（替代上游 ofelia 容器） |
 
-对外只需穿透 **9080（爬虫后台）** 与 **9081（爬虫门户）** 两个端口；搜索、向量库、
-缓存等全部封在容器内部的 `127.0.0.1` 上。
+对外只需穿透 **9080（爬虫后台）** 一个端口；缓存等组件全部封在容器内部的
+`127.0.0.1` 上。
 
-所有宿主端口号都是 `.env` 变量；MCP / 爬虫执行器 / 浏览器 / 语义检索 / 文档解析 /
-内嵌搜索的端口也预留了变量（`MCP_HOST_PORT`、`SCRAPER_HOST_PORT`、`BROWSER_HOST_PORT`、
-`SEMANTIC_HOST_PORT`、`PARSE_HOST_PORT`、`SEARXNG_HOST_PORT`），需要哪个就在
-compose 里取消对应映射行注释，端口号数字直接改 `.env` 即可。
+所有宿主端口号都是 `.env` 变量；MCP / 爬虫执行器 / 浏览器 / 文档解析的端口也
+预留了变量（`MCP_HOST_PORT`、`SCRAPER_HOST_PORT`、`BROWSER_HOST_PORT`、
+`PARSE_HOST_PORT`），需要哪个就在 compose 里取消对应映射行注释，端口号数字
+直接改 `.env` 即可。
 
 ## 镜像体积（实测 GHCR）
 
-| 指标 | 大小 |
-|---|---|
-| `docker pull` 下载量（压缩层, linux/amd64） | ≈ 1045 MiB（约 1 GB） |
-| `docker pull` 下载量（压缩层, linux/arm64） | ≈ 1038 MiB |
-| 解压后磁盘占用 | ≈ 2.5–3 GB |
-| 运行期额外下载（首次启动, 存于数据卷） | BGE-M3 模型 ~2.3 GB + CloakBrowser 二进制 |
+| 指标 | full (latest) | lite (本分支) |
+|---|---|---|
+| `docker pull` 下载量（压缩层, linux/amd64） | ≈ 1045 MiB | 以 CI 实际输出为准（删去 torch/qdrant/searxng 后显著更小） |
+| 解压后磁盘占用 | ≈ 2.5–3 GB | ≈ 1.5 GB 量级 |
+| 运行期额外下载（首次启动, 存于数据卷） | BGE-M3 模型 ~2.3 GB | 仅 CloakBrowser 二进制（可选） |
 
-多架构 manifest 共 37 层/架构；镜像本身不含任何 AI 模型，嵌入模型按需缓存在
-`$DATA_DIR/huggingface`，不在镜像体积内。
+lite 镜像不含 torch / BGE-M3 / qdrant / searxng，无需下载任何嵌入模型。
 
 ## 快速开始
 
@@ -50,7 +61,7 @@ compose 里取消对应映射行注释，端口号数字直接改 `.env` 即可�
 cp .env.allinone.example .env
 docker compose up -d
 
-# 等健康检查通过（首次启动需下载 ~2.3GB 嵌入模型）
+# 等健康检查通过（lite 无嵌入模型下载, 通常十几秒内就绪）
 curl http://localhost:9080/health        # {"status":"ok", ...}
 curl http://localhost:9080/docs          # Swagger UI
 

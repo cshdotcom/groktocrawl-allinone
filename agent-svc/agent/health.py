@@ -35,48 +35,6 @@ async def check_valkey(url: str) -> dict[str, Any]:
         return {"status": "down", "latency_ms": round(elapsed, 1), "detail": str(e)}
 
 
-async def check_searxng(url: str) -> dict[str, Any]:
-    """Probe SearXNG via its /health endpoint.
-
-    Does NOT send a real search query. The /health endpoint reports
-    server liveness and Valkey connectivity without hitting any
-    external search API, so this probe has zero cost.
-    """
-    start = time.monotonic()
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{url.rstrip('/')}/health",
-            )
-            elapsed = (time.monotonic() - start) * 1000
-            if resp.status_code == 200:
-                return {
-                    "status": "ok",
-                    "latency_ms": round(elapsed, 1),
-                    "detail": "SearXNG health ok",
-                }
-            elapsed = (time.monotonic() - start) * 1000
-            return {
-                "status": "down",
-                "latency_ms": round(elapsed, 1),
-                "detail": f"SearXNG health returned HTTP {resp.status_code}",
-            }
-    except TimeoutError:
-        elapsed = (time.monotonic() - start) * 1000
-        return {
-            "status": "down",
-            "latency_ms": round(elapsed, 1),
-            "detail": "SearXNG connection timed out",
-        }
-    except Exception as e:
-        elapsed = (time.monotonic() - start) * 1000
-        return {
-            "status": "down",
-            "latency_ms": round(elapsed, 1),
-            "detail": f"SearXNG error: {e}",
-        }
-
-
 async def check_scraper(url: str) -> dict[str, Any]:
     """Probe scraper-svc by hitting its /scrape endpoint with a trivial URL.
 
@@ -185,7 +143,6 @@ async def check_portal(url: str) -> dict[str, Any]:
 
 async def check_all(
     valkey_url: str = "redis://127.0.0.1:6379/0",
-    searxng_url: str = "http://127.0.0.1:8888",
     scraper_url: str = "http://127.0.0.1:8001",
     browser_url: str = "http://127.0.0.1:8012",
     portal_url: str = "http://127.0.0.1:8081",
@@ -199,7 +156,6 @@ async def check_all(
     """
     results = await asyncio.gather(
         check_valkey(valkey_url),
-        check_searxng(searxng_url),
         check_scraper(scraper_url),
         check_browser(browser_url),
         check_portal(portal_url),
@@ -210,18 +166,15 @@ async def check_all(
         "valkey": results[0]
         if not isinstance(results[0], BaseException)
         else {"status": "error", "detail": str(results[0])},
-        "searxng": results[1]
+        "scraper": results[1]
         if not isinstance(results[1], BaseException)
         else {"status": "error", "detail": str(results[1])},
-        "scraper": results[2]
+        "browser": results[2]
         if not isinstance(results[2], BaseException)
         else {"status": "error", "detail": str(results[2])},
-        "browser": results[3]
+        "portal": results[3]
         if not isinstance(results[3], BaseException)
         else {"status": "error", "detail": str(results[3])},
-        "portal": results[4]
-        if not isinstance(results[4], BaseException)
-        else {"status": "error", "detail": str(results[4])},
     }
 
     statuses = [v["status"] for v in probes.values()]

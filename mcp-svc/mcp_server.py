@@ -235,51 +235,6 @@ async def scrape(
     return _resp(result)
 
 
-@mcp.tool(annotations=_RO)
-async def search(
-    query: str,
-    limit: int = 5,
-    sources: list[str] | None = None,
-    categories: list[str] | None = None,
-    search_type: str | None = None,
-    retrieval_mode: str | None = None,
-    output_schema: dict[str, Any] | None = None,
-    system_prompt: str | None = None,
-) -> str:
-    """Search the web and return results with URLs titles and snippets.
-
-    Calls POST /v2/search on the GroktoCrawl API.  Supports fast mode
-    (raw results, <1s) and rich mode (scraped + LLM synthesis, 1-3s).
-
-    Args:
-        query: The search query string.
-        limit: Maximum number of results to return (1–100, default 5).
-        sources: Optional source-type filter (e.g. web, news, images).
-        categories: Optional content-category filter (e.g. research,
-            github, pdf, news, science, it).
-        search_type: Search mode — ``fast`` for raw results (<1s) or
-            ``rich`` for scraped + synthesized results (1-3s).
-            Defaults to fast when omitted.
-        retrieval_mode: Retrieval strategy — keyword (default),
-            semantic, hybrid, vector, or hybrid_vector.
-        output_schema: Optional JSON Schema for structured extraction
-            from the search results (single-call search→scrape→extract).
-        system_prompt: Optional guidance for synthesis behavior.
-    """
-    result = await _client.search(
-        query=query,
-        limit=limit,
-        sources=sources,
-        categories=categories,
-        search_type=search_type,
-        retrieval_mode=retrieval_mode,
-        output_schema=output_schema,
-        system_prompt=system_prompt,
-    )
-    _ensure_success(result)
-    return _resp(result)
-
-
 # ── Tools 3–6: crawl, get_crawl_status, cancel_crawl, get_crawl_errors ──
 
 
@@ -449,129 +404,7 @@ async def map(
 # ── Tools 8–9: agent, get_agent_status ─────────────────────────────
 
 
-@mcp.tool(annotations=_RO)
-async def agent(
-    prompt: str,
-    model: str | None = None,
-    urls: list[str] | None = None,
-    output_schema: dict[str, Any] | None = None,
-    citation_style: str | None = None,
-    max_credits: int | None = None,
-    include_images: bool = False,
-    force_fresh: bool = False,
-    search_type: str | None = None,
-) -> str:
-    """Run autonomous research: search → scrape → LLM synthesis with sources.
-
-    Calls POST /v2/agent on the GroktoCrawl API and returns the job ID
-    immediately.  The research runs asynchronously — poll with
-    get_agent_status for the synthesized answer with cited sources, and
-    cancel_agent to stop an in-progress job.
-
-    Args:
-        prompt: What the agent should research (max 100k chars).
-        model: Optional per-request LLM model override (e.g. ``gpt-4o``).
-            When omitted or ``default``, the server-configured model is used.
-        urls: Optional seed URLs to constrain research.
-        output_schema: Optional JSON Schema for structured output.
-        citation_style: Citation formatting — ``inline`` (bare [N]
-            markers) or ``compact`` ([N](url) embedded links).
-        max_credits: Optional cap on credits consumed by the job.
-        include_images: When True, collect images from scraped sources.
-        force_fresh: When True, bypass the research-memory cache and run
-            a fresh research pipeline.
-        search_type: Research depth — ``deep`` (multi-query, default) or
-            ``focused`` (single-query, single-pass).
-    """
-    result = await _client.create_agent(
-        prompt=prompt,
-        model=model,
-        urls=urls,
-        output_schema=output_schema,
-        citation_style=citation_style,
-        max_credits=max_credits,
-        include_images=include_images,
-        force_fresh=force_fresh,
-        search_type=search_type,
-    )
-    _ensure_success(result)
-    return _resp(result)
-
-
-@mcp.tool(annotations=_RO)
-async def get_agent_status(job_id: str) -> str:
-    """Poll the status of an agent research job and return results when done.
-
-    Calls GET /v2/agent/{job_id} on the GroktoCrawl API.  Returns the
-    current status (processing/completed/failed) and, when completed,
-    the research answer with source details and credits used.
-
-    Args:
-        job_id: The agent job ID returned by the agent tool.
-    """
-    result = await _client.get_agent_status(job_id)
-    _ensure_success(result)
-    return _resp(result)
-
-
-@mcp.tool(annotations=_DESTRUCTIVE)
-async def cancel_agent(job_id: str) -> str:
-    """Cancel an in-progress agent research job.
-
-    Calls DELETE /v2/agent/{job_id} on the GroktoCrawl API.  The job
-    transitions to cancelled.
-
-    Args:
-        job_id: The agent job ID returned by the agent tool.
-    """
-    result = await _client.cancel_agent(job_id)
-    _ensure_success(result)
-    return _resp(result)
-
-
 # ── Tool 10: answer ────────────────────────────────────────────────
-
-
-@mcp.tool(annotations=_RO)
-async def answer(
-    query: str,
-    num_sources: int = 5,
-    model: str | None = None,
-    output_schema: dict[str, Any] | None = None,
-    citation_style: str | None = None,
-    search_type: str | None = None,
-    retrieval_mode: str | None = None,
-) -> str:
-    """Grounded Q&A: search → scrape → LLM answer with inline citations.
-
-    Calls POST /v2/answer on the GroktoCrawl API.  This is a synchronous
-    single-turn endpoint designed for 1-3s latency.  Returns a markdown
-    answer with [N] citation markers and a list of source URLs.
-
-    Args:
-        query: Natural language question.
-        num_sources: Number of sources to scrape and cite (1–20,
-            default 5).
-        model: Optional per-request LLM model override (e.g. ``gpt-4o``).
-        output_schema: Optional JSON Schema for structured output from
-            the answer.
-        citation_style: Citation formatting — ``inline`` (default) or
-            ``compact``.
-        search_type: Hint for search depth (default ``auto``).
-        retrieval_mode: Retrieval strategy — keyword (default),
-            semantic, hybrid, vector, or hybrid_vector.
-    """
-    result = await _client.answer(
-        question=query,
-        num_sources=num_sources,
-        model=model,
-        output_schema=output_schema,
-        citation_style=citation_style,
-        search_type=search_type,
-        retrieval_mode=retrieval_mode,
-    )
-    _ensure_success(result)
-    return _resp(result)
 
 
 # ── Tools 11–12: extract, get_extract_status ───────────────────────
@@ -620,68 +453,7 @@ async def get_extract_status(job_id: str) -> str:
     return _resp(result)
 
 
-# ── Tool 13: enrich ────────────────────────────────────────────────
-
-
-@mcp.tool(annotations=_RO)
-async def enrich(
-    url: str | None = None,
-    fields: dict[str, dict[str, Any]] | None = None,
-    source_hint: str | None = None,
-    effort: str = "low",
-) -> str:
-    """Enrich a URL or entity with web-sourced structured data and source URLs.
-
-    Calls POST /v2/enrich on the GroktoCrawl API.  Searches the web for
-    additional context about the entity and returns enriched items with
-    source attribution for each field.
-
-    Args:
-        url: The URL or entity name to enrich with web context.  When
-            omitted, ``fields`` must be provided (a single-item entity
-            with a generic summary field is requested by default).
-        fields: Optional map of field names to ``{"description": ...}``
-            specs describing what to extract, e.g.
-            ``{"founded": {"description": "Year the company was founded"}}``.
-        source_hint: Optional entity-type hint (company, person, url,
-            product) to steer search.
-        effort: Extraction effort — ``low`` (default), ``medium``, or
-            ``high``.
-    """
-    result = await _client.enrich(
-        url=url,
-        fields=fields,
-        source_hint=source_hint,
-        effort=effort,
-    )
-    _ensure_success(result)
-    return _resp(result)
-
-
-# ── Tool 14: find_similar ──────────────────────────────────────────
-
-
-@mcp.tool(annotations=_RO)
-async def find_similar(
-    url: str,
-    limit: int | None = None,
-    search_mode: str | None = None,
-) -> str:
-    """Find pages semantically similar to a given URL using vector embeddings.
-
-    Calls POST /v2/find-similar on the GroktoCrawl API.  Returns a list
-    of similar URLs with relevance metadata.
-
-    Args:
-        url: The reference URL to find similar pages for.  Must start
-            with http:// or https://.
-        limit: Maximum number of similar URLs to return.
-        search_mode: Similarity source — ``qdrant`` (default, local
-            index) or ``web`` (web-assisted reranking).
-    """
-    result = await _client.find_similar(url=url, limit=limit, search_mode=search_mode)
-    _ensure_success(result)
-    return _resp(result)
+# ── Tool 15: extract ───────────────────────────────────────────────
 
 
 # ── Tool 15: batch_scrape ──────────────────────────────────────────
@@ -838,36 +610,6 @@ async def parse(file_url: str) -> str:
     return _resp(result)
 
 
-# ── Tool 20: resolve_citations ──────────────────────────────────────
-
-
-@mcp.tool(annotations=_RO)
-async def resolve_citations(
-    text: str,
-    sources: list[dict[str, Any]],
-    style: str = "inline",
-) -> str:
-    """Resolve compact citation IDs in markdown text to full source cards.
-
-    Calls POST /v2/citations/resolve on the GroktoCrawl API.  In
-    ``compact`` style, replaces ``[N]`` markers with ``[N](url)``
-    self-contained links.  In ``inline`` style, returns the text
-    unchanged with a separate citations map.
-
-    Args:
-        text: The markdown text containing ``[N]`` citation markers.
-        sources: List of source objects, each with ``url`` and
-            ``title`` keys.  Sources are 1-indexed — the first source
-            corresponds to ``[1]``.
-        style: Citation style: ``compact`` transforms ``[N]`` to
-            ``[N](url)``; ``inline`` leaves ``[N]`` as-is.  Defaults
-            to ``inline``.
-    """
-    result = await _client.resolve_citations(text=text, sources=sources, style=style)
-    _ensure_success(result)
-    return _resp(result)
-
-
 # ── Tools 22-25: browser sessions ─────────────────────────────────
 
 
@@ -968,54 +710,33 @@ async def create_monitor(
     schedule: str = "0 */6 * * *",
     webhook: str | None = None,
     monitor_type: str = "scrape",
-    query: str | None = None,
-    sources: list[str] | None = None,
-    categories: list[str] | None = None,
-    num_results: int | None = None,
 ) -> str:
     """Create a scheduled change monitor.  Returns a monitor ID.
 
     Calls POST /v2/monitor on the GroktoCrawl API.  Scrape-type monitors
-    watch a URL for content changes; search-type monitors watch search
-    results for new items (requires ``query``).
+    watch a URL for content changes.  (Lite edition: search-type monitors
+    are not available — no embedded SearXNG.)
 
     Args:
         url: URL to monitor (required for monitor_type ``scrape``).
         schedule: Cron expression for check frequency (default
             ``0 */6 * * *`` = every 6 hours).
         webhook: URL called when a change is detected.
-        monitor_type: ``scrape`` (default) or ``search``.
-        query: Search query (required for monitor_type ``search``).
-        sources: Source types for search monitors (web, news, images,
-            video, social).
-        categories: Content categories for search monitors (research,
-            github, pdf, news, science, it).
-        num_results: Max results per check for search monitors.
+        monitor_type: ``scrape`` (default). Search type is not supported
+            on the lite edition.
     """
-    if monitor_type not in ("scrape", "search"):
+    if monitor_type != "scrape":
         raise ToolError(
-            f"create_monitor: monitor_type must be 'scrape' or 'search', "
-            f"got {monitor_type!r}"
+            f"create_monitor: lite edition supports monitor_type='scrape' only "
+            f'(got {monitor_type!r}; search monitors need the full image)'
         )
-    if monitor_type == "search" and not query:
-        raise ToolError("create_monitor: query is required for monitor_type='search'")
-    if monitor_type == "scrape" and not url:
+    if not url:
         raise ToolError("create_monitor: url is required for monitor_type='scrape'")
-    search_config: dict[str, Any] | None = None
-    if monitor_type == "search":
-        search_config = {"query": query}
-        if sources:
-            search_config["sources"] = sources
-        if categories:
-            search_config["categories"] = categories
-        if num_results is not None:
-            search_config["numResults"] = num_results
     result = await _client.monitor_create(
         url=url,
         schedule=schedule,
         webhook=webhook,
         monitor_type=monitor_type,
-        search_config=search_config,
     )
     _ensure_success(result)
     return _resp(result)
@@ -1055,55 +776,23 @@ async def update_monitor(
     url: str | None = None,
     schedule: str | None = None,
     webhook: str | None = None,
-    query: str | None = None,
-    sources: list[str] | None = None,
-    categories: list[str] | None = None,
-    num_results: int | None = None,
 ) -> str:
     """Update a change monitor's configuration.
 
     Calls PATCH /v2/monitor/{monitor_id} on the GroktoCrawl API.  Only
-    provided fields are changed.
+    provided fields are changed.  (Lite edition: scrape-type monitors only.)
 
     Args:
         monitor_id: The monitor ID to update.
         url: New URL to monitor (scrape type).
         schedule: New cron expression.
         webhook: New webhook URL.
-        query: New search query (search type).
-        sources: New source types (search type).
-        categories: New content categories (search type).
-        num_results: New max results per check (search type).
     """
-    search_config: dict[str, Any] | None = None
-    if query is not None or sources or categories or num_results is not None:
-        if query is None:
-            # agent-svc replaces the whole search_config on PATCH, so a
-            # partial search-field update must preserve the existing
-            # query instead of silently resetting it to "".
-            current = await _client.monitor_get(monitor_id)
-            if current.get("error"):
-                return current  # _ensure_success below surfaces the error
-            existing_query = (current.get("search_config") or {}).get("query")
-            if not existing_query:
-                raise ToolError(
-                    "update_monitor: cannot update search fields — monitor "
-                    f"{monitor_id!r} has no search query; pass query explicitly"
-                )
-            query = existing_query
-        search_config = {"query": query}
-        if sources:
-            search_config["sources"] = sources
-        if categories:
-            search_config["categories"] = categories
-        if num_results is not None:
-            search_config["numResults"] = num_results
     result = await _client.monitor_update(
         monitor_id=monitor_id,
         url=url,
         schedule=schedule,
         webhook=webhook,
-        search_config=search_config,
     )
     _ensure_success(result)
     return _resp(result)

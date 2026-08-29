@@ -1,18 +1,20 @@
 # ============================================================================
-# GroktoCrawl 全功能单镜像编排文件 (All-in-One)
-# 镜像: ghcr.io/cshdotcom/groktocrawl-allinone:latest
+# GroktoCrawl 轻量版单镜像编排文件 (All-in-One LITE, branch: lite)
+# 镜像: ghcr.io/cshdotcom/groktocrawl-allinone:lite
 #
-# 一个容器 = 爬虫后台 API + 门户 UI + 五层爬虫 + 无头浏览器 + 文档解析
-#          + 语义向量检索(BGE-M3) + 内嵌 SearXNG 搜索 + 内嵌 Qdrant 向量库
+# 一个容器 = 爬虫后台 API + 五层爬虫 + 无头浏览器 + 文档解析
 #          + 内嵌 Valkey 缓存队列 + 可选离线演示 LLM + Monitor 定时巡检
 #
-# 对外默认只暴露两个端口:
-#   爬虫后台(API/Swagger) → AGENT_HOST_PORT   默认 9080
-#   爬虫门户(Web UI)      → PORTAL_HOST_PORT  默认 9081
-# 搜索/向量库/缓存等组件仅存在于容器内部(127.0.0.1), 不对外穿透。
+# LITE 与 full 版的区别: 不含内嵌 SearXNG 搜索 / Qdrant 向量库 /
+# semantic-svc(BGE-M3) / 门户 UI / 自主研究 Agent。
+# /v2/search、/v2/answer、/v2/agent、/v2/find_similar 等接口不存在;
+# scrape/crawl/map/extract/parse/browser 会话/MCP 全部可用。
+#
+# 对外默认只暴露一个端口:
+#   爬虫后台(API/Swagger) → AGENT_HOST_PORT 默认 9080
 #
 # 所有配置项集中在同目录 .env 文件中(参考 .env.allinone.example):
-#   端口 / 存储位置 / AI 大模型 / 搜索引擎地址 / API 密钥 全部可改。
+#   端口 / 存储位置 / AI 大模型 / API 密钥 全部可改。
 #
 # 快速开始:
 #   cp .env.allinone.example .env
@@ -22,28 +24,24 @@
 
 services:
   groktocrawl:
-    image: ghcr.io/cshdotcom/groktocrawl-allinone:${TAG:-latest}
+    image: ghcr.io/cshdotcom/groktocrawl-allinone:${TAG:-lite}
     container_name: groktocrawl
     hostname: groktocrawl
     restart: unless-stopped
 
-    # ── 端口映射（宿主端口全部由 .env 变量控制, 默认只穿透后台+门户）──
+    # ── 端口映射（宿主端口全部由 .env 变量控制, 默认只穿透后台）──
     ports:
       - "${AGENT_HOST_PORT:-9080}:8080"    # 爬虫后台 REST API + Swagger(/docs)
-      - "${PORTAL_HOST_PORT:-9081}:8081"   # 门户 UI 单搜索框
       #
       # —— 可选端口: 取消对应行注释即生效, 宿主端口号在 .env 中改变量即可 ——
       #
       # - "${MCP_HOST_PORT:-9082}:8002"        # MCP 协议(AI 客户端直连)
       # - "${SCRAPER_HOST_PORT:-19001}:8001"   # 五层爬虫执行器
       # - "${BROWSER_HOST_PORT:-19012}:8012"   # 无头浏览器会话服务
-      # - "${SEMANTIC_HOST_PORT:-19003}:8003"  # 语义向量检索(BGE-M3)
       # - "${PARSE_HOST_PORT:-19013}:8013"     # 文档解析(PDF/Office/OCR)
-      # 内嵌搜索 SearXNG 直连(两步: 开启本行 + .env 设 SEARXNG_BIND=0.0.0.0):
-      # - "${SEARXNG_HOST_PORT:-19088}:8888"
       #
-      # 注: 内嵌 Qdrant(6333)/Valkey(6379) 绑定容器内 127.0.0.1 不支持直接映射;
-      #     需外部访问请改用 QDRANT_URL / VALKEY_URL 指向外部实例并自动让位内嵌组件。
+      # 注: 内嵌 Valkey(6379) 绑定容器内 127.0.0.1 不支持直接映射;
+      #     需外部访问请改用 VALKEY_URL 指向外部实例并自动让位内嵌组件。
 
     # ── 配置注入 ───────────────────────────────────────────────────
     # .env 中定义的全部变量原样传入容器(entrypoint 只使用其中相关键)。
@@ -56,29 +54,19 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # 嵌入式组件开关: true=强制启动 false=禁用 auto=无外部地址时自动启动
+      # (lite 仅剩 valkey/llm-fixture 两个嵌入组件)
       EMBED_VALKEY: ${EMBED_VALKEY:-auto}
-      EMBED_QDRANT: ${EMBED_QDRANT:-auto}
-      EMBED_SEARXNG: ${EMBED_SEARXNG:-auto}
       EMBED_LLM_FIXTURE: ${EMBED_LLM_FIXTURE:-auto}
       MONITOR_SCHEDULER_ENABLED: ${MONITOR_SCHEDULER_ENABLED:-true}
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-600}
 
-      # AI / 搜索等关键引用透传(compose 显式声明便于一眼看清、也无惧空值)
+      # AI 引用透传(extract/llmstxt 等需要 LLM)
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-deepseek-v4-flash}
-      SEARXNG_URL: ${SEARXNG_URL:-}
-      SEARCH_LANGUAGE: ${SEARCH_LANGUAGE:-auto}
-      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
-      QDRANT_URL: ${QDRANT_URL:-}
       VALKEY_URL: ${VALKEY_URL:-}
       API_KEY: ${API_KEY:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
-
-      # SearXNG 引擎集与出站代理(见 .env 说明; 默认=大陆直连可达精选集)
-      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
-      SEARXNG_DISABLED_ENGINES: ${SEARXNG_DISABLED_ENGINES:-}
-      SEARXNG_OUTGOING_PROXY: ${SEARXNG_OUTGOING_PROXY:-}
 
       # MCP 鉴权/转发: 取 API_KEY 同值(MCP 的 /mcp 端点用它鉴权,
       # 并随内部调用转发给 agent —— 留空则两者均不鉴权)
@@ -87,10 +75,7 @@ services:
     volumes:
       # ── 存储位置：修改 DATA_DIR 即可整体搬迁, 或单独覆盖每一行 ──
       - "${DATA_DIR:-./groktocrawl-data}/valkey:/data/valkey"
-      - "${DATA_DIR:-./groktocrawl-data}/qdrant:/data/qdrant"
-      - "${DATA_DIR:-./groktocrawl-data}/huggingface:/data/huggingface"   # 嵌入模型缓存(HF_HOME)
       - "${DATA_DIR:-./groktocrawl-data}/cloakbrowser:/root/.cloakbrowser" # 反检测浏览器二进制
-      - "${DATA_DIR:-./groktocrawl-data}/config:/data/config"             # SearXNG 密钥等
       # 运行日志(也始终输出到 docker logs)
       - "${DATA_DIR:-./groktocrawl-data}/logs:/var/log/groktocrawl"
 
@@ -99,7 +84,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 10
-      start_period: 180s    # 首次启动需下载嵌入模型 bge-m3 (~2.3GB)
+      start_period: 60s     # lite 版无嵌入模型下载, 启动很快
 
     stop_grace_period: 35s
     shm_size: "512mb"       # Chromium 渲染需要共享内存
@@ -107,5 +92,5 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    # 内存限制按需调整; BGE-M3 语义服务加载后常驻 ~2-3GB
-    mem_limit: ${MEM_LIMIT:-6g}
+    # lite 版常驻内存约 1-1.5GB(主要是 Chromium + Python 服务), 按需调整
+    mem_limit: ${MEM_LIMIT:-3g}

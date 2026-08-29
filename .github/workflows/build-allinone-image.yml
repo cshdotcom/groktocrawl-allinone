@@ -1,10 +1,12 @@
 # GroktoCrawl All-in-One — 构建并推送 GHCR
-# 触发: 推送 main / 打 v* 标签 / 手动(可选架构)
+# 触发: 推送 main(全功能版) / lite(轻量版) / 打 v* 标签 / 手动(可选架构)
+# - main 推送 → tag: latest, main, sha-<short>
+# - lite 推送 → tag: lite, sha-<short>  (不含 SearXNG/Qdrant/semantic/portal)
 name: build-allinone-image
 
 on:
   push:
-    branches: [main]
+    branches: [main, lite]
     tags: ["v*"]
     # 纯文档/编排/env 模板变更不重建镜像
     paths-ignore:
@@ -80,7 +82,7 @@ jobs:
             type=sha,format=short
           labels: |
             org.opencontainers.image.title=GroktoCrawl All-in-One
-            org.opencontainers.image.description=Firecrawl-compatible web data platform: scraper + search (embedded SearXNG) + semantic retrieval (BGE-M3/Qdrant) in a single container.
+            org.opencontainers.image.description=Firecrawl-compatible web data platform: scraper + browser sessions + parse + MCP in a single lite container (no embedded search/vector DB).
 
       - name: Build and push
         uses: docker/build-push-action@v6

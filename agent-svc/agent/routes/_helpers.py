@@ -100,19 +100,5 @@ async def _browser_proxy(
 
 
 async def _index_scrape(url: str, title: str, content: str, request: Request) -> None:
-    """Fire-and-forget index a scraped page in the vector index."""
-    semantic = None
-    try:
-        from agent.semantic_client import SemanticClient
-
-        semantic = SemanticClient(request.app.state.semantic_url)
-        await semantic.index_page(url, title, content[:2000])
-    except Exception:
-        logger.warning(
-            "Semantic indexing failed for %s — page will not appear in vector search",
-            url,
-            exc_info=True,
-        )
-    finally:
-        if semantic is not None:
-            await semantic.close()
+    """No-op on the lite edition — no semantic-svc / vector index."""
+    return None

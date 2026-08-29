@@ -1000,14 +1000,8 @@ class GroktocrawlClient:
         schedule: str = "0 */6 * * *",
         webhook: str | None = None,
         monitor_type: str = "scrape",
-        search_config: dict | None = None,
     ) -> dict:
-        """Create a change monitor.
-
-        ``monitor_type`` is ``"scrape"`` (watch a URL for content changes)
-        or ``"search"`` (watch search results for new items; requires
-        ``search_config`` with a ``query``).
-        """
+        """Create a change monitor (scrape type; lite has no search monitors)."""
         body: dict[str, Any] = {
             "schedule": schedule,
             "monitor_type": monitor_type,
@@ -1016,8 +1010,6 @@ class GroktocrawlClient:
             body["url"] = url
         if webhook is not None:
             body["webhook"] = webhook
-        if search_config:
-            body["search_config"] = search_config
         return await self._post("/v2/monitor", body)
 
     async def monitor_list(self) -> dict:
@@ -1034,9 +1026,8 @@ class GroktocrawlClient:
         url: str | None = None,
         schedule: str | None = None,
         webhook: str | None = None,
-        search_config: dict | None = None,
     ) -> dict:
-        """Update a monitor's configuration."""
+        """Update a monitor's configuration (scrape type; lite edition)."""
         body: dict[str, Any] = {}
         if url is not None:
             body["url"] = url
@@ -1044,8 +1035,6 @@ class GroktocrawlClient:
             body["schedule"] = schedule
         if webhook is not None:
             body["webhook"] = webhook
-        if search_config:
-            body["search_config"] = search_config
         return await self._patch(f"/v2/monitor/{monitor_id}", body)
 
     async def monitor_run(self, monitor_id: str) -> dict:

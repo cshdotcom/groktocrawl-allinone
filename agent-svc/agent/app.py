@@ -28,13 +28,7 @@ from .health import check_all
 from .llm import LLMClient
 from .models import ErrorDetail, ErrorResponse
 from .rate_limiter import SlidingWindowRateLimiter
-from .research_memory import (
-    DEFAULT_SWEEP_INTERVAL_SECONDS,
-    ResearchMemory,
-    run_research_memory_sweep_loop,
-)
 from .scraper_client import ScraperClient
-from .searxng_client import SearXNGClient
 from .settings import load_settings
 from .store import JobStore
 from .tasks import TaskTracker
@@ -119,7 +113,6 @@ def create_app() -> FastAPI:
     conn = Redis.from_url(redis_url, decode_responses=True)
     store = JobStore(redis_url)
     scraper_client = ScraperClient(settings.scraper_url)
-    searxng_client = SearXNGClient(settings.searxng_url)
     llm_client = LLMClient(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
@@ -165,19 +158,12 @@ def create_app() -> FastAPI:
     app.state.redis = conn
     app.state.job_store = store
     app.state.scraper_client = scraper_client
-    app.state.searxng_client = searxng_client
     app.state.llm_client = llm_client
     app.state.valkey_url = redis_url
     app.state.scraper_url = settings.scraper_url
-    app.state.searxng_url = settings.searxng_url
     app.state.llm_base_url = settings.llm_base_url
     app.state.llm_api_key = settings.llm_api_key
     app.state.llm_model = settings.llm_model
-    app.state.semantic_url = settings.semantic_url
-    app.state.research_memory = ResearchMemory(
-        redis_url=redis_url,
-        semantic_url=settings.semantic_url,
-    )
     app.state.rate_limiter = rate_limiter
     app.state.max_searches_per_request = settings.max_searches_per_request
     app.state.task_tracker = TaskTracker()
@@ -223,7 +209,6 @@ def create_app() -> FastAPI:
         """
         result = await check_all(
             valkey_url=app.state.valkey_url,
-            searxng_url=app.state.searxng_url,
             scraper_url=app.state.scraper_url,
             browser_url=os.environ.get("BROWSER_SVC_URL", "http://127.0.0.1:8012"),
             portal_url=os.environ.get("PORTAL_SVC_URL", "http://127.0.0.1:8081"),
@@ -335,20 +320,11 @@ def create_app() -> FastAPI:
         app.state.task_tracker.create_background_task(
             start_analytics_exporter(redis_url=app.state.valkey_url)
         )
-        app.state.task_tracker.create_background_task(
-            run_research_memory_sweep_loop(
-                app.state.research_memory,
-                DEFAULT_SWEEP_INTERVAL_SECONDS,
-                app.state.task_tracker.shutdown_event,
-            )
-        )
 
     @app.on_event("shutdown")
     async def shutdown_event() -> None:
         await app.state.task_tracker.shutdown(grace_period=5.0)
-        await app.state.research_memory.close()
         await app.state.scraper_client.close()
-        await app.state.searxng_client.close()
         await app.state.llm_client.close()
 
     return app

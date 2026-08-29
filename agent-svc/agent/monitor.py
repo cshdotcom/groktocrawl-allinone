@@ -30,9 +30,6 @@ REDIS_URL = (
 )
 MONITOR_KEY = "monitors"  # hash: monitor_id -> json config
 HISTORY_KEY = "monitor:{}:history"  # list of check results
-SEEN_KEY = "monitor:{}:seen"  # set of seen URLs (search monitors)
-SEARCH_TTL = 90 * 86400  # 90 days TTL for seen URL sets
-SEARXNG_URL = os.getenv("SEARXNG_URL", "http://127.0.0.1:8888")
 
 
 def _now_iso() -> str:
@@ -178,116 +175,6 @@ async def check_monitor(monitor_id: str, config: dict) -> dict:
     return result
 
 
-async def run_search_monitor(monitor_id: str, config: dict) -> dict:
-    """Run a search monitor check: search → dedup → notify new results."""
-    search_config = config.get("search_config", {})
-    query = search_config.get("query", "")
-    num_results = search_config.get("numResults", 10)
-    sources = search_config.get("sources")
-    categories = search_config.get("categories")
-    webhook_url = config.get("webhook")
-
-    result: dict[str, Any] = {
-        "monitor_id": monitor_id,
-        "monitor_type": "search",
-        "query": query,
-        "checked_at": _now_iso(),
-        "changed": False,
-        "new_results": [],
-        "total_results": 0,
-    }
-
-    # Search
-    from .searxng_client import SearXNGClient
-
-    r = _get_redis()
-    searxng = SearXNGClient(SEARXNG_URL)
-    try:
-        search_results, _ = await searxng.search(
-            query=query,
-            limit=num_results,
-            categories=categories,
-            sources=sources,
-        )
-    except Exception as e:
-        await searxng.close()
-        result["error"] = f"Search failed: {e}"
-        _store_check(monitor_id, result)
-        return result
-    finally:
-        await searxng.close()
-
-    result["total_results"] = len(search_results)
-
-    # Dedup against seen set
-    seen_key = SEEN_KEY.format(monitor_id)
-    new_urls: list[dict] = []
-    for item in search_results:
-        url = item.get("url", "")
-        if not url:
-            continue
-        if not r.sismember(seen_key, url):
-            new_urls.append(item)
-
-    # Add new URLs to seen set
-    if new_urls:
-        for item in new_urls:
-            r.sadd(seen_key, item["url"])
-        r.expire(seen_key, SEARCH_TTL)
-
-    result["new_results"] = [
-        {
-            "url": item["url"],
-            "title": item.get("title", ""),
-            "description": item.get("description", ""),
-        }
-        for item in new_urls
-    ]
-    result["new_count"] = len(new_urls)
-
-    if new_urls:
-        result["changed"] = True
-
-    # Update stored config
-    config["last_checked"] = _now_iso()
-    config["last_result"] = (
-        f"{len(new_urls)} new results" if new_urls else "no new results"
-    )
-    save_monitor(monitor_id, config)
-
-    # Notify via webhook (only new results)
-    if webhook_url and new_urls:
-        # SSRF guard (issue #469): same validation policy as job webhooks —
-        # public HTTP(S) destinations only, transient DNS failures retried.
-        if await ensure_deliverable_webhook_destination(
-            webhook_url, context=f"search monitor {monitor_id}"
-        ):
-            try:
-                # Redirects disabled so a validated public destination
-                # cannot be redirected to a restricted host.
-                async with httpx.AsyncClient(
-                    timeout=10, follow_redirects=False
-                ) as client:
-                    await client.post(
-                        webhook_url,
-                        json={
-                            "event": "monitor.changed",
-                            "monitor_id": monitor_id,
-                            "monitor_type": "search",
-                            "query": query,
-                            "new_results": result["new_results"],
-                            "checked_at": result["checked_at"],
-                        },
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Webhook delivery failed for search monitor %s: %s", monitor_id, e
-                )
-
-    _store_check(monitor_id, result)
-    return result
-
-
 async def run_monitor(
     monitor_id: str, scraper_url: str = "http://127.0.0.1:8001"
 ) -> dict:
@@ -303,7 +190,16 @@ async def run_monitor(
     config["scraper_url"] = scraper_url
     mt = config.get("monitor_type", "scrape")
     if mt == "search":
-        return await run_search_monitor(monitor_id, config)
+        # Lite edition: no embedded SearXNG → search monitors unsupported
+        result = {
+            "monitor_id": monitor_id,
+            "monitor_type": "search",
+            "checked_at": _now_iso(),
+            "changed": False,
+            "error": "search monitors require the full image (embedded SearXNG removed in lite)",
+        }
+        _store_check(monitor_id, result)
+        return result
     return await check_monitor(monitor_id, config)
 
 
@@ -314,22 +210,8 @@ async def check_all_async() -> list[dict]:
     for mid, config in monitors.items():
         mt = config.get("monitor_type", "scrape")
         if mt == "search":
-            logger.info(
-                "Checking search monitor %s: %s",
-                mid,
-                config.get("search_config", {}).get("query"),
-            )
-            try:
-                result = await run_search_monitor(mid, config)
-                results.append(result)
-                if result.get("changed"):
-                    logger.info(
-                        "Search monitor %s: %d new results",
-                        mid,
-                        result.get("new_count", 0),
-                    )
-            except Exception as e:
-                logger.error("Search monitor %s failed: %s", mid, e)
+            # Lite edition: search monitors are not supported (no SearXNG)
+            logger.warning("Skipping search monitor %s (lite edition has no search)", mid)
         else:
             logger.info("Checking monitor %s: %s", mid, config.get("url"))
             try:
@@ -356,12 +238,7 @@ def check_all() -> None:
             len(changed),
         )
         for r in changed:
-            if r.get("monitor_type") == "search":
-                print(
-                    f"  NEW RESULTS: {r.get('query', '?')} ({r['monitor_id']}) — {r.get('new_count', 0)} new"
-                )
-            else:
-                print(f"  CHANGED: {r['url']} ({r['monitor_id']})")
+            print(f"  CHANGED: {r['url']} ({r['monitor_id']})")
             logger.info("  CHANGED: %s (%s)", r["url"], r["monitor_id"])
     else:
         logger.info("Monitors checked: %d, all unchanged", len(results))

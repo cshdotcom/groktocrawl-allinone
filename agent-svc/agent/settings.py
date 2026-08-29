@@ -15,8 +15,6 @@ class AgentSettings(BaseModel):
     valkey_port: int = Field(default=6379, alias="VALKEY_PORT")
     valkey_db: int = Field(default=0, alias="VALKEY_DB")
     scraper_url: str = Field(default="http://127.0.0.1:8001", alias="SCRAPER_URL")
-    searxng_url: str = Field(default="http://127.0.0.1:8888", alias="SEARXNG_URL")
-    semantic_url: str = Field(default="http://127.0.0.1:8003", alias="SEMANTIC_URL")
     llm_base_url: str = Field(default="http://127.0.0.1:8011/v1", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
@@ -54,10 +52,6 @@ class AgentSettings(BaseModel):
     )
     crawl_idle_timeout_seconds: int = Field(
         default=300, alias="CRAWL_IDLE_TIMEOUT_SECONDS"
-    )
-    research_memory_ttl: int = Field(default=604800, alias="RESEARCH_MEMORY_TTL")
-    research_memory_max_artifact_bytes: int = Field(
-        default=5_242_880, alias="RESEARCH_MEMORY_MAX_ARTIFACT_BYTES"
     )
     # Global weighted admission budgets (ADR-0051). Values are weighted
     # units; per-operation weights are fetch=1, llm=4, browser=8.
