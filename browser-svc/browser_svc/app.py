@@ -11,7 +11,7 @@ import os
 import random
 import time
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -190,6 +190,14 @@ class BrowserExecuteRequest(BaseModel):
     text: str | None = None
     script: str | None = None
     timeout: int = 10000
+    # Playwright page.goto wait condition. Default is "domcontentloaded": the
+    # previous hardcoded "networkidle" (500ms of zero network traffic) almost
+    # never settles on modern portals (analytics/ads keep firing requests) and
+    # made navigate time out even on fast sites like baidu.com. Callers that
+    # need the stricter condition can still pass wait_until="networkidle".
+    wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = (
+        "domcontentloaded"
+    )
 
 
 class BrowserCreateResponse(BaseModel):
@@ -425,7 +433,7 @@ async def execute_action(session_id: str, req: BrowserExecuteRequest):
             redis_client = getattr(app.state, "redis", None)
             await _inject_cookies(req.url, session.context, redis_client)
 
-            await page.goto(req.url, wait_until="networkidle", timeout=req.timeout)
+            await page.goto(req.url, wait_until=req.wait_until, timeout=req.timeout)
             # Bot challenge detection (Cloudflare / DDoS-Guard) — wait for JS challenge to resolve
             title = await page.title()
             current_url = page.url

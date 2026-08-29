@@ -896,6 +896,7 @@ async def browser_execute(
     text: str | None = None,
     script: str | None = None,
     timeout: int | None = None,
+    wait_until: str | None = None,
 ) -> str:
     """Execute an action in a headless browser session.
 
@@ -910,6 +911,9 @@ async def browser_execute(
         text: Text to type (type/write actions).
         script: JavaScript source (executeScript action).
         timeout: Action timeout in milliseconds (default 10000).
+        wait_until: Navigation wait condition for navigate: domcontentloaded
+            (default), load, commit, or networkidle. Prefer domcontentloaded
+            for portal sites with continuous analytics traffic.
     """
     result = await _browser_handler.execute_action(
         session_id=session_id,
@@ -920,6 +924,7 @@ async def browser_execute(
             text=text,
             script=script,
             timeout=timeout,
+            wait_until=wait_until,
         ),
     )
     _ensure_success(result)

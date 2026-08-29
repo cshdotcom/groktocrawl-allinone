@@ -1,7 +1,7 @@
 """Pydantic models matching the Firecrawl v2 agent API contract."""
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -960,6 +960,13 @@ class BrowserExecuteRequest(BaseModel):
     text: str | None = None
     script: str | None = None
     timeout: int = 10000
+    wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = Field(
+        default="domcontentloaded",
+        description=(
+            "Playwright navigation wait condition (navigate action only). "
+            "Default domcontentloaded; use networkidle for strict quiet-network waits."
+        ),
+    )
 
 
 class BrowserCreateResponse(BaseModel):
