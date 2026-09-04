@@ -73,8 +73,15 @@ async def parse_file(request: Request) -> Any:
 
     - Direct: multipart form with ``file`` field (small files)
     - Two-step: form field ``upload_id`` referencing a pre-uploaded file
+
+    ``ocr=hosted`` is an explicit opt-in and is forwarded only when the caller
+    requests hosted OCR. The parse service remains local-first by default.
     """
     form = await request.form()
+    form_ocr = form.get("ocr", "local")
+    ocr = form_ocr if isinstance(form_ocr, str) else "local"
+    if ocr not in {"local", "hosted"}:
+        raise InvalidRequestError(detail="ocr must be 'local' or 'hosted'")
 
     # Two-step mode: retrieve pre-uploaded file from Valkey
     upload_id_raw = form.get("upload_id")
@@ -110,6 +117,7 @@ async def parse_file(request: Request) -> Any:
             resp = await client.post(
                 f"{PARSE_SVC_URL}/parse",
                 files={"file": (filename, content, content_type)},
+                data={"ocr": ocr},
             )
             try:
                 return resp.json()
@@ -127,7 +135,6 @@ async def parse_file(request: Request) -> Any:
 
     upload = form["file"]  # type: ignore[union-attr]
     content = await upload.read()  # type: ignore[union-attr]
-
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{PARSE_SVC_URL}/parse",
@@ -138,6 +145,7 @@ async def parse_file(request: Request) -> Any:
                     upload.content_type or "application/octet-stream",  # type: ignore[union-attr]
                 )
             },
+            data={"ocr": ocr},
         )
         try:
             return resp.json()

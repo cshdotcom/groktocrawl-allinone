@@ -5,7 +5,11 @@ conversion (including legacy/macro/ODF formats), encrypted-document errors,
 and the PDF OCR fallback path.
 """
 
+import json
 import sys
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
@@ -19,6 +23,42 @@ _FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "anydoc
 
 def _load(name: str) -> bytes:
     return (_FIXTURES / name).read_bytes()
+
+
+@contextmanager
+def _hosted_parse_stub(status: int, body: dict):
+    """Serve one deterministic Firecrawl Parse-compatible endpoint."""
+    hits: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            payload = self.rfile.read(int(self.headers.get("content-length", "0")))
+            hits.append(
+                {
+                    "path": self.path,
+                    "body": payload,
+                    "authorization": self.headers.get("authorization"),
+                }
+            )
+            reply = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, format: str, *args: object):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 # ── _ext ──────────────────────────────────────────────────────────────────
@@ -147,7 +187,7 @@ class TestParseAnyDoc:
 
 
 class TestParsePdf:
-    """PDF parsing with graceful degradation and OCR fallback tests."""
+    """PDF parsing with local-first and explicit hosted OCR behavior."""
 
     def _make_minimal_pdf(self):
         """Return a minimal valid PDF (no extractable text)."""
@@ -196,8 +236,90 @@ class TestParsePdf:
             {"pdf2image": fake_pdf2image, "pytesseract": fake_tesseract},
         ):
             result = _parse_pdf(content, "scan.pdf")
-        assert result["metadata"].get("extraction") == "ocr"
+        assert result["metadata"].get("extraction") == "local_ocr"
         assert "OCR-extracted" in result["markdown"]
+
+    def test_hosted_ocr_uses_real_anydoc_binding_and_sends_whole_pdf(self, monkeypatch):
+        content = _load("scanned-image-only.pdf")
+        reply = {"success": True, "data": {"markdown": "# Hosted scan\n"}}
+        with _hosted_parse_stub(200, reply) as (api_url, hits):
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_URL", api_url)
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_KEY", "test-only-api-key")
+
+            result = _parse_pdf(content, "scan.pdf", ocr="hosted")
+
+        assert result["markdown"] == "# Hosted scan"
+        assert result["metadata"]["extraction"] == "anydoc_hosted_ocr"
+        assert len(hits) == 1
+        assert hits[0]["path"] == "/v2/parse"
+        assert hits[0]["authorization"] == "Bearer test-only-api-key"
+        payload = hits[0]["body"]
+        assert isinstance(payload, bytes)
+        assert content in payload
+
+    def test_hosted_request_keeps_text_pdf_local(self, monkeypatch):
+        reply = {"success": True, "data": {"markdown": "must not be used"}}
+        with _hosted_parse_stub(200, reply) as (api_url, hits):
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_URL", api_url)
+
+            result = _parse_pdf(
+                _load("fixture-text.pdf"), "fixture-text.pdf", ocr="hosted"
+            )
+
+        assert "Fixture Document" in result["markdown"]
+        assert result["metadata"]["extraction"] == "pypdf"
+        assert hits == []
+
+    def test_hosted_ocr_requires_explicit_endpoint(self, monkeypatch):
+        monkeypatch.delenv("PARSE_HOSTED_OCR_API_URL", raising=False)
+        monkeypatch.delenv("PARSE_HOSTED_OCR_API_URL", raising=False)
+        with pytest.raises(HTTPException) as exc:
+            _parse_pdf(_load("scanned-image-only.pdf"), "scan.pdf", ocr="hosted")
+        assert exc.value.status_code == 422
+        assert "not configured" in exc.value.detail.lower()
+
+    def test_hosted_ocr_rejects_invalid_endpoint(self, monkeypatch):
+        monkeypatch.setenv("PARSE_HOSTED_OCR_API_URL", "file:///tmp/not-http")
+        with pytest.raises(HTTPException) as exc:
+            _parse_pdf(_load("scanned-image-only.pdf"), "scan.pdf", ocr="hosted")
+        assert exc.value.status_code == 422
+        assert "invalid" in exc.value.detail.lower()
+
+    def test_hosted_failure_redacts_credentials(self, monkeypatch, caplog):
+        credential = "test-only-api-key"
+        reply = {
+            "success": False,
+            "error": f"provider rejected {credential}",
+        }
+        with _hosted_parse_stub(401, reply) as (api_url, _hits):
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_URL", api_url)
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_KEY", credential)
+
+            with pytest.raises(HTTPException) as exc:
+                _parse_pdf(_load("scanned-image-only.pdf"), "scan.pdf", ocr="hosted")
+
+        assert exc.value.status_code == 502
+        assert credential not in exc.value.detail
+        assert credential not in caplog.text
+
+    def test_default_local_mode_never_hits_hosted_endpoint(self, monkeypatch):
+        content = _load("scanned-image-only.pdf")
+        fake_pdf2image = ModuleType("pdf2image")
+        fake_pdf2image.convert_from_bytes = lambda *a, **k: [object()]
+        fake_tesseract = ModuleType("pytesseract")
+        fake_tesseract.image_to_string = lambda *a, **k: "local text " * 20
+        reply = {"success": True, "data": {"markdown": "must not be used"}}
+
+        with _hosted_parse_stub(200, reply) as (api_url, hits):
+            monkeypatch.setenv("PARSE_HOSTED_OCR_API_URL", api_url)
+            with patch.dict(
+                sys.modules,
+                {"pdf2image": fake_pdf2image, "pytesseract": fake_tesseract},
+            ):
+                result = _parse_pdf(content, "scan.pdf")
+
+        assert result["metadata"]["extraction"] == "local_ocr"
+        assert hits == []
 
     def test_corrupt_pdf_graceful(self):
         result = _parse_pdf(b"not a pdf at all", "bad.pdf")

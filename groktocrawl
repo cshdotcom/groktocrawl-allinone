@@ -1197,14 +1197,20 @@ class Client:
 
     # ---- Parse ----
 
-    def parse_file(self, filepath):
+    def parse_file(self, filepath, ocr="local"):
         import requests
 
         url = self._url("/parse")
         if self.dry_run:
-            return {"dry_run": True, "method": "POST", "url": url, "file": filepath}
+            return {
+                "dry_run": True,
+                "method": "POST",
+                "url": url,
+                "file": filepath,
+                "ocr": ocr,
+            }
         with open(filepath, "rb") as f:
-            resp = requests.post(url, files={"file": f}, timeout=120)
+            resp = requests.post(url, files={"file": f}, data={"ocr": ocr}, timeout=120)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
@@ -2597,7 +2603,7 @@ def cmd_parse(client: Client, args: argparse.Namespace) -> None:
         die(f"File not found: {args.filepath}")
 
     try:
-        result = client.parse_file(args.filepath)
+        result = client.parse_file(args.filepath, ocr=args.ocr)
     except ApiError as e:
         die(e)
 
@@ -3038,6 +3044,12 @@ def make_parser() -> argparse.ArgumentParser:
         "-o", "--output", help="Write output to file instead of stdout"
     )
     p_parse.add_argument("--upload-id", help="Parse a pre-uploaded file by upload ID")
+    p_parse.add_argument(
+        "--ocr",
+        choices=["local", "hosted"],
+        default="local",
+        help="OCR mode for scanned PDFs; hosted uploads the whole document to Parse",
+    )
 
     # --- Parse Upload ---
     p_parse_upload = subparsers.add_parser(
