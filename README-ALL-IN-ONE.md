@@ -170,6 +170,11 @@ API_KEY=<openssl rand -hex 32>
   的默认超时毫秒，与 Playwright 官方默认一致。个别慢站（首字节慢、或阻塞脚本
   指向被墙域）navigate 报 `Timeout xx ms exceeded` 时调大，如 `60000`；
   也可以在单次工具调用里传 `timeout` 参数临时覆盖（毫秒）；
+- `PARSE_HOSTED_OCR_API_URL=` → 扫描版 PDF 托管 OCR（可选）：`/v2/parse` 传
+  `ocr=hosted`（CLI `--ocr hosted`）时把整份文档交给外部 OCR API；留空则
+  始终本地 OCR；
+- `YOUTUBE_*_INTERVAL` / `YOUTUBE_RATE_LIMIT_COOLDOWN` → YouTube 字幕抓取
+  节流与限流冷却（默认已保守，被限流自动冷却 1 小时并回退浏览器渲染）；
 - `EMBED_QDRANT=false` + `QDRANT_URL=http://...` → 用外部向量库；
 - `EMBED_VALKEY=false` + `VALKEY_URL=redis://...` → 用外部 Redis/Valkey；
 - `SEARXNG_ENGINES=` → 引擎白名单：留空=大陆精选集，`all`=全部，或逗号分隔精确指定；
