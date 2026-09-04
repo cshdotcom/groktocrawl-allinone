@@ -129,34 +129,27 @@ class TestTransportSecurity:
 
 
 class TestToolDiscovery:
-    """VAL-MCP-B01: tools/list returns exactly 35 tools."""
+    """VAL-MCP-B01: tools/list returns exactly 27 tools (lite edition)."""
 
     async def test_tool_count(self):
-        """tools/list returns exactly 35 tools."""
+        """tools/list returns exactly 27 tools."""
         tools = await mcp.list_tools()
-        assert len(tools) == 35, f"Expected 35 tools, got {len(tools)}"
+        assert len(tools) == 27, f"Expected 27 tools, got {len(tools)}"
 
     async def test_all_tool_names(self):
-        """All 35 expected tool names are present."""
+        """All 27 expected tool names are present."""
         tools = await mcp.list_tools()
         names = {t.name for t in tools}
         expected = {
             "scrape",
-            "search",
             "crawl",
             "get_crawl_status",
             "cancel_crawl",
             "get_crawl_errors",
             "get_active_crawls",
             "map",
-            "agent",
-            "get_agent_status",
-            "cancel_agent",
-            "answer",
             "extract",
             "get_extract_status",
-            "enrich",
-            "find_similar",
             "batch_scrape",
             "generate_llmstxt",
             "get_activity",
@@ -164,7 +157,6 @@ class TestToolDiscovery:
             "cancel_batch_scrape",
             "get_batch_scrape_errors",
             "get_llmstxt_status",
-            "resolve_citations",
             "parse",
             "create_browser_session",
             "browser_execute",
@@ -407,19 +399,6 @@ class TestContentBlocks:
         assert data.get("success") is True
         assert "id" in data
 
-    async def test_agent_returns_json_with_id(self, monkeypatch):
-        """Agent (job-creating tool) returns the job ID immediately."""
-        _patch_client(
-            monkeypatch,
-            {
-                "create_agent": {"success": True, "id": "agent-job-123"},
-            },
-        )
-        result = await mcp.call_tool("agent", {"prompt": "research something"})
-        data = json.loads(_text(result))
-        assert data.get("success") is True
-        assert "id" in data
-
     async def test_batch_scrape_returns_json_with_id(self, monkeypatch):
         """Batch scrape returns JSON with id."""
         _patch_client(
@@ -509,85 +488,6 @@ class TestToolCallRouting:
         assert captured.get("formats") == ["markdown"]
         assert captured.get("only_main_content") is False
         assert "only_main_content" in captured  # explicitly passed
-
-    async def test_search_passes_search_type(self, monkeypatch):
-        """Search passes search_type through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_search(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"data": {"web": []}}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "search",
-            _fake_search,
-        )
-        await mcp.call_tool(
-            "search",
-            {
-                "query": "test",
-                "limit": 3,
-                "search_type": "rich",
-            },
-        )
-        assert captured.get("query") == "test"
-        assert captured.get("limit") == 3
-        assert captured.get("search_type") == "rich"
-
-    async def test_answer_passes_num_sources(self, monkeypatch):
-        """Answer passes num_sources through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_answer(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"answer": "test", "sources": []}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "answer",
-            _fake_answer,
-        )
-        await mcp.call_tool("answer", {"query": "test?", "num_sources": 3})
-        assert captured.get("question") == "test?"
-        assert captured.get("num_sources") == 3
-
-    async def test_agent_passes_model_override(self, monkeypatch):
-        """Agent passes model override + research params through to client."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_create_agent(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"success": True, "id": "agent-1"}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "create_agent",
-            _fake_create_agent,
-        )
-        await mcp.call_tool(
-            "agent",
-            {
-                "prompt": "test research",
-                "model": "gpt-4o",
-                "urls": ["https://a.com"],
-                "output_schema": {"type": "object"},
-                "citation_style": "compact",
-                "max_credits": 5,
-                "include_images": True,
-                "force_fresh": True,
-                "search_type": "focused",
-            },
-        )
-        assert captured.get("prompt") == "test research"
-        assert captured.get("model") == "gpt-4o"
-        assert captured.get("urls") == ["https://a.com"]
-        assert captured.get("output_schema") == {"type": "object"}
-        assert captured.get("citation_style") == "compact"
-        assert captured.get("max_credits") == 5
-        assert captured.get("include_images") is True
-        assert captured.get("force_fresh") is True
-        assert captured.get("search_type") == "focused"
 
     async def test_map_passes_limit(self, monkeypatch):
         """Map passes limit through."""
@@ -679,31 +579,6 @@ class TestToolCallRouting:
         await mcp.call_tool("get_llmstxt_status", {"job_id": "llmstxt-1"})
         assert captured.get("job_id") == "llmstxt-1"
 
-    async def test_resolve_citations_routing(self, monkeypatch):
-        """resolve_citations passes text, sources, and style through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_resolve_citations(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"resolved_text": "See [1](https://a.com)", "citations": []}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "resolve_citations",
-            _fake_resolve_citations,
-        )
-        await mcp.call_tool(
-            "resolve_citations",
-            {
-                "text": "See [1]",
-                "sources": [{"url": "https://a.com", "title": "A"}],
-                "style": "compact",
-            },
-        )
-        assert captured.get("text") == "See [1]"
-        assert captured.get("sources") == [{"url": "https://a.com", "title": "A"}]
-        assert captured.get("style") == "compact"
-
     # ── New surface routing ──
 
     async def test_crawl_passes_path_filters(self, monkeypatch):
@@ -743,82 +618,6 @@ class TestToolCallRouting:
         assert captured.get("allow_subdomains") is True
         assert captured.get("allow_external_links") is True
         assert captured.get("prompt") == "crawl the docs section"
-
-    async def test_search_passes_sources_and_categories(self, monkeypatch):
-        """Search passes sources/categories/retrieval_mode through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_search(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"data": {"web": []}}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "search",
-            _fake_search,
-        )
-        await mcp.call_tool(
-            "search",
-            {
-                "query": "rust",
-                "sources": ["github"],
-                "categories": ["research"],
-                "retrieval_mode": "hybrid",
-                "output_schema": {"type": "object"},
-                "system_prompt": "be concise",
-            },
-        )
-        assert captured.get("sources") == ["github"]
-        assert captured.get("categories") == ["research"]
-        assert captured.get("retrieval_mode") == "hybrid"
-        assert captured.get("output_schema") == {"type": "object"}
-        assert captured.get("system_prompt") == "be concise"
-
-    async def test_answer_passes_model_override(self, monkeypatch):
-        """Answer passes model/output_schema/citation_style through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_answer(**kwargs: Any) -> dict:
-            captured.update(kwargs)
-            return {"answer": "ok", "sources": []}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "answer",
-            _fake_answer,
-        )
-        await mcp.call_tool(
-            "answer",
-            {
-                "query": "q",
-                "model": "gpt-4o",
-                "output_schema": {"type": "object"},
-                "citation_style": "compact",
-                "search_type": "auto",
-                "retrieval_mode": "semantic",
-            },
-        )
-        assert captured.get("model") == "gpt-4o"
-        assert captured.get("output_schema") == {"type": "object"}
-        assert captured.get("citation_style") == "compact"
-        assert captured.get("search_type") == "auto"
-        assert captured.get("retrieval_mode") == "semantic"
-
-    async def test_cancel_agent_routing(self, monkeypatch):
-        """cancel_agent passes job_id through."""
-        captured: dict[str, Any] = {}
-
-        async def _fake_cancel_agent(job_id: str) -> dict:
-            captured["job_id"] = job_id
-            return {"success": True}
-
-        monkeypatch.setattr(
-            __import__("mcp_server", fromlist=["_client"])._client,
-            "cancel_agent",
-            _fake_cancel_agent,
-        )
-        await mcp.call_tool("cancel_agent", {"job_id": "agent-1"})
-        assert captured.get("job_id") == "agent-1"
 
     async def test_cancel_batch_scrape_routing(self, monkeypatch):
         """cancel_batch_scrape passes job_id through."""
@@ -926,7 +725,7 @@ class TestToolCallRouting:
         assert captured.get("session_id") == "s1"
 
     async def test_create_monitor_routing(self, monkeypatch):
-        """create_monitor passes search config through."""
+        """create_monitor passes scrape config through (lite: scrape only)."""
         captured: dict[str, Any] = {}
 
         async def _fake_monitor_create(**kwargs: Any) -> dict:
@@ -941,18 +740,14 @@ class TestToolCallRouting:
         await mcp.call_tool(
             "create_monitor",
             {
-                "monitor_type": "search",
-                "query": "rust",
-                "sources": ["github"],
-                "num_results": 5,
+                "monitor_type": "scrape",
+                "url": "https://example.com",
+                "schedule": "0 0 * * *",
             },
         )
-        assert captured.get("monitor_type") == "search"
-        assert captured.get("search_config") == {
-            "query": "rust",
-            "sources": ["github"],
-            "numResults": 5,
-        }
+        assert captured.get("monitor_type") == "scrape"
+        assert captured.get("url") == "https://example.com"
+        assert captured.get("schedule") == "0 0 * * *"
 
     async def test_update_monitor_routing(self, monkeypatch):
         """update_monitor passes fields through."""
@@ -973,61 +768,32 @@ class TestToolCallRouting:
         assert captured.get("monitor_id") == "m-1"
         assert captured.get("schedule") == "0 0 * * *"
 
-    async def test_update_monitor_preserves_existing_query(self, monkeypatch):
-        """update_monitor merges the existing query on partial search updates."""
-        import mcp_server
-
-        updated: dict[str, Any] = {}
-
-        async def _fake_monitor_get(monitor_id: str) -> dict:
-            return {
-                "id": monitor_id,
-                "monitor_type": "search",
-                "search_config": {"query": "rust", "numResults": 5},
-            }
+    async def test_update_monitor_scrape_fields(self, monkeypatch):
+        """update_monitor passes url through (scrape type, lite edition)."""
+        captured: dict[str, Any] = {}
 
         async def _fake_monitor_update(**kwargs: Any) -> dict:
-            updated.update(kwargs)
+            captured.update(kwargs)
             return {"success": True}
 
-        monkeypatch.setattr(mcp_server._client, "monitor_get", _fake_monitor_get)
-        monkeypatch.setattr(mcp_server._client, "monitor_update", _fake_monitor_update)
-
+        monkeypatch.setattr(
+            __import__("mcp_server", fromlist=["_client"])._client,
+            "monitor_update",
+            _fake_monitor_update,
+        )
         await mcp.call_tool(
             "update_monitor",
-            {"monitor_id": "m-1", "sources": ["github"]},
+            {"monitor_id": "m-1", "url": "https://example.com/v2"},
         )
-        # Existing query preserved; sources merged in.
-        assert updated.get("search_config") == {
-            "query": "rust",
-            "sources": ["github"],
-        }
+        assert captured.get("monitor_id") == "m-1"
+        assert captured.get("url") == "https://example.com/v2"
 
-    async def test_update_monitor_search_fields_require_query(self, monkeypatch):
-        """update_monitor refuses search-field updates when no query exists."""
-        import mcp_server
-
-        async def _fake_monitor_get(monitor_id: str) -> dict:
-            return {"id": monitor_id, "monitor_type": "scrape", "search_config": None}
-
-        monkeypatch.setattr(mcp_server._client, "monitor_get", _fake_monitor_get)
-
+    async def test_create_monitor_rejects_search_type(self):
+        """create_monitor with search type raises a clear lite-edition error."""
         from mcp.server.fastmcp.exceptions import ToolError
 
-        with pytest.raises(ToolError, match="no search query"):
-            await mcp.call_tool(
-                "update_monitor",
-                {"monitor_id": "m-1", "sources": ["github"]},
-            )
-
-    async def test_create_monitor_requires_query_for_search(self, monkeypatch):
-        """create_monitor with search type but no query raises a clear error."""
-        from mcp.server.fastmcp.exceptions import ToolError
-
-        with pytest.raises(ToolError, match="query is required"):
-            await mcp.call_tool(
-                "create_monitor", {"monitor_type": "search", "query": ""}
-            )
+        with pytest.raises(ToolError, match="scrape' only"):
+            await mcp.call_tool("create_monitor", {"monitor_type": "search"})
 
     async def test_create_monitor_requires_url_for_scrape(self, monkeypatch):
         """create_monitor with scrape type but no url raises a clear error."""
@@ -1259,20 +1025,20 @@ class TestErrorHandling:
         _patch_client(
             monkeypatch,
             {
-                "get_agent_status": {
+                "get_crawl_status": {
                     "success": True,
                     "status": "failed",
-                    "error": "Research pipeline exhausted credits",
+                    "error": "Crawl pipeline exhausted retries",
                 },
             },
         )
         from mcp.server.fastmcp.exceptions import ToolError
 
         with pytest.raises(ToolError) as exc_info:
-            await mcp.call_tool("get_agent_status", {"job_id": "agent-1"})
+            await mcp.call_tool("get_crawl_status", {"job_id": "crawl-1"})
         err_text = str(exc_info.value)
         assert "failed" in err_text.lower()
-        assert "credits" in err_text.lower()
+        assert "retries" in err_text.lower()
 
     async def test_cancelled_job_status_not_error(self, monkeypatch):
         """A cancelled job is informative, not an error.
@@ -1299,7 +1065,7 @@ class TestErrorHandling:
         _patch_client(
             monkeypatch,
             {
-                "get_agent_status": {
+                "get_crawl_status": {
                     "success": True,
                     "status": "retry_scheduled",
                     "retryable": True,
@@ -1308,7 +1074,7 @@ class TestErrorHandling:
                 },
             },
         )
-        result = await mcp.call_tool("get_agent_status", {"job_id": "agent-1"})
+        result = await mcp.call_tool("get_crawl_status", {"job_id": "crawl-1"})
         data = json.loads(_text(result))
         assert data.get("status") == "retry_scheduled"
 

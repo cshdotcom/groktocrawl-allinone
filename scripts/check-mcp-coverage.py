@@ -61,10 +61,6 @@ EXEMPT: dict[str, str] = {
 # Map each expressible API path to the MCP tool that covers it.
 PATH_TO_MCP_TOOL: dict[str, str] = {
     "GET /v2/activity": "get_activity",
-    "POST /v2/agent": "agent",
-    "GET /v2/agent/{job_id}": "get_agent_status",
-    "DELETE /v2/agent/{job_id}": "cancel_agent",
-    "POST /v2/answer": "answer",
     "POST /v2/batch/scrape": "batch_scrape",
     "GET /v2/batch/scrape/{job_id}": "get_batch_scrape_status",
     "DELETE /v2/batch/scrape/{job_id}": "cancel_batch_scrape",
@@ -73,16 +69,13 @@ PATH_TO_MCP_TOOL: dict[str, str] = {
     "GET /v2/browser": "list_browser_sessions",
     "POST /v2/browser/{session_id}/execute": "browser_execute",
     "DELETE /v2/browser/{session_id}": "destroy_browser_session",
-    "POST /v2/citations/resolve": "resolve_citations",
     "POST /v2/crawl": "crawl",
     "GET /v2/crawl/active": "get_active_crawls",
     "GET /v2/crawl/{job_id}": "get_crawl_status",
     "DELETE /v2/crawl/{job_id}": "cancel_crawl",
     "GET /v2/crawl/{job_id}/errors": "get_crawl_errors",
-    "POST /v2/enrich": "enrich",
     "POST /v2/extract": "extract",
     "GET /v2/extract/{job_id}": "get_extract_status",
-    "POST /v2/find-similar": "find_similar",
     "POST /v2/generate-llmstxt": "generate_llmstxt",
     "GET /v2/generate-llmstxt/{job_id}": "get_llmstxt_status",
     "POST /v2/map": "map",
@@ -94,7 +87,6 @@ PATH_TO_MCP_TOOL: dict[str, str] = {
     "POST /v2/monitor/{monitor_id}/run": "run_monitor",
     "POST /v2/parse": "parse",
     "POST /v2/scrape": "scrape",
-    "POST /v2/search": "search",
 }
 
 
