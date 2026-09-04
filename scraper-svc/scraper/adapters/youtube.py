@@ -3,8 +3,7 @@ YouTube adapter — extracts video transcripts and metadata.
 
 Fallback chain:
   1. youtube_transcript_api — no API key required, fast
-  2. yt-dlp subtitle download — heavier dependency, slower
-  3. Browser render + DOM extraction — last resort
+  2. Browser render + DOM extraction — last resort
 
 Metadata sources:
   - oEmbed API (https://www.youtube.com/oembed?format=json) for title,
@@ -16,12 +15,69 @@ Metadata sources:
 from __future__ import annotations
 
 import logging
+import random
 import re
+import tempfile
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .base import AdapterContext, AdapterError, AdapterResult, SiteAdapter, adapter
 
 logger = logging.getLogger(__name__)
+
+
+class _YouTubeCooldownError(Exception):
+    """Raised when YouTube is in a host-level cooldown window."""
+
+
+class _YouTubeRequestGate:
+    """Process-wide pacing and cooldown for the shared YouTube egress."""
+
+    def __init__(self) -> None:
+        import os
+
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+        self._cooldown_until = 0.0
+        self.min_interval = float(os.getenv("YOUTUBE_MIN_INTERVAL", "10"))
+        self.max_interval = float(os.getenv("YOUTUBE_MAX_INTERVAL", "20"))
+        self.request_interval = float(os.getenv("YOUTUBE_REQUEST_INTERVAL", "0.75"))
+        self.subtitle_interval = float(os.getenv("YOUTUBE_SUBTITLE_INTERVAL", "5"))
+        self.cooldown_seconds = float(os.getenv("YOUTUBE_RATE_LIMIT_COOLDOWN", "3600"))
+
+    def wait(self, interval: float | None = None, jitter: float | None = None) -> None:
+        """Reserve a request slot, sleeping outside the mutex."""
+        interval = self.request_interval if interval is None else interval
+        jitter = interval if jitter is None else jitter
+        with self._lock:
+            now = time.monotonic()
+            if now < self._cooldown_until:
+                raise _YouTubeCooldownError
+            target = max(now, self._next_allowed)
+            self._next_allowed = target + interval + random.uniform(0, jitter)
+        if target > now:
+            time.sleep(target - now)
+
+    def mark_rate_limited(self) -> None:
+        with self._lock:
+            self._cooldown_until = max(
+                self._cooldown_until, time.monotonic() + self.cooldown_seconds
+            )
+
+
+_YOUTUBE_GATE = _YouTubeRequestGate()
+
+
+def _is_youtube_rate_limit(error: BaseException) -> bool:
+    text = str(error).lower()
+    return any(
+        token in text
+        for token in ("429", "ipblocked", "requestblocked", "rate-limited")
+    )
+
 
 # ── URL pattern matching ─────────────────────────────────────────
 
@@ -79,6 +135,9 @@ async def _fetch_oembed(video_id: str) -> dict:
 
     oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
     try:
+        import asyncio
+
+        await asyncio.to_thread(_YOUTUBE_GATE.wait)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(oembed_url)
             if resp.status_code == 200:
@@ -108,6 +167,9 @@ async def _fetch_description(video_id: str) -> str | None:
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
+        import asyncio
+
+        await asyncio.to_thread(_YOUTUBE_GATE.wait)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 url,
@@ -239,13 +301,22 @@ def _description_to_markdown(desc: str) -> str:
 # ── Transcript via youtube_transcript_api ────────────────────────
 
 
-async def _fetch_transcript(video_id: str) -> str | None:
+@dataclass
+class _TranscriptFetch:
+    """Transcript text plus the acquisition provenance needed downstream."""
+
+    text: str
+    language: str
+    translated_to: str | None = None
+
+
+async def _fetch_transcript(video_id: str) -> _TranscriptFetch | None:
     """Fetch the video transcript via ``youtube_transcript_api``.
 
     Runs the sync API in a thread to avoid blocking the event loop.
 
-    Returns the full transcript as a single text block, or ``None``
-    if unavailable.
+    Prefer native English, then explicitly translate a translatable native
+    track.  ``fetch(..., languages=["en"])`` does not search translated tracks.
     """
     import asyncio
 
@@ -254,17 +325,147 @@ async def _fetch_transcript(video_id: str) -> str | None:
 
         def _get_transcript():
             api = YouTubeTranscriptApi()
-            transcript_list = api.fetch(video_id, languages=["en"])
-            return " ".join(item.text for item in transcript_list)
+            _YOUTUBE_GATE.wait()
+            transcripts = list(api.list(video_id))
+
+            # Keep native English ahead of translated output, including when
+            # the native track is auto-generated.
+            english = [t for t in transcripts if t.language_code == "en"]
+            candidates = english + [
+                t for t in transcripts if t.language_code != "en" and t.is_translatable
+            ]
+            for transcript in candidates:
+                translated_to = None
+                selected = transcript
+                if transcript.language_code != "en":
+                    try:
+                        selected = transcript.translate("en")
+                        translated_to = "en"
+                    except Exception as exc:
+                        logger.debug(
+                            "Transcript translation failed for %s (%s -> en): %s",
+                            video_id,
+                            transcript.language_code,
+                            exc,
+                        )
+                        continue
+
+                try:
+                    _YOUTUBE_GATE.wait(_YOUTUBE_GATE.subtitle_interval)
+                    fetched = selected.fetch()
+                    text = " ".join(item.text for item in fetched).strip()
+                except _YouTubeCooldownError:
+                    raise
+                except Exception as exc:
+                    if _is_youtube_rate_limit(exc):
+                        _YOUTUBE_GATE.mark_rate_limited()
+                        raise _YouTubeCooldownError from exc
+                    logger.debug(
+                        "Transcript fetch failed for %s (%s): %s",
+                        video_id,
+                        transcript.language_code,
+                        exc,
+                    )
+                    continue
+                if text:
+                    return _TranscriptFetch(
+                        text=text,
+                        language=transcript.language_code,
+                        translated_to=translated_to,
+                    )
+            return None
 
         transcript = await asyncio.to_thread(_get_transcript)
-        return transcript or None
+        if transcript:
+            return transcript
     except ImportError:
         logger.debug("youtube_transcript_api not installed")
+    except _YouTubeCooldownError:
+        logger.info("YouTube acquisition is in cooldown; deferring %s", video_id)
         return None
     except Exception as exc:
+        if _is_youtube_rate_limit(exc):
+            _YOUTUBE_GATE.mark_rate_limited()
+            logger.info("YouTube rate limit encountered; deferring %s", video_id)
+            return None
         logger.debug("youtube_transcript_api failed for %s: %s", video_id, exc)
+    return await _fetch_transcript_via_ytdlp(video_id)
+
+
+async def _fetch_transcript_via_ytdlp(video_id: str) -> _TranscriptFetch | None:
+    """Fetch English auto-captions when the transcript API omits translation metadata."""
+    import asyncio
+
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.debug("yt-dlp not installed")
         return None
+
+    def _download():
+        with tempfile.TemporaryDirectory(prefix="groktocrawl-youtube-") as tmp:
+            output = str(Path(tmp) / "transcript.%(ext)s")
+            options = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "writeautomaticsub": True,
+                "sleep_interval_requests": 0.75,
+                "sleep_interval_subtitles": _YOUTUBE_GATE.subtitle_interval,
+                "sleep_interval": _YOUTUBE_GATE.min_interval,
+                "max_sleep_interval": _YOUTUBE_GATE.max_interval,
+                "retries": 1,
+                "extractor_retries": 1,
+                "subtitleslangs": ["en"],
+                "subtitlesformat": "vtt",
+                "outtmpl": output,
+            }
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=True
+                )
+            subtitle = next(Path(tmp).glob("transcript*.vtt"), None)
+            if subtitle is None:
+                return None
+            text = _vtt_to_text(subtitle.read_text(encoding="utf-8"))
+            if not text:
+                return None
+            source_language = "unknown"
+            for formats in info.get("automatic_captions", {}).values():
+                for item in formats:
+                    query = parse_qs(urlparse(item.get("url", "")).query)
+                    if query.get("tlang") == ["en"] and query.get("lang"):
+                        source_language = query["lang"][0]
+                        break
+                if source_language != "unknown":
+                    break
+            return _TranscriptFetch(text, source_language, "en")
+
+    try:
+        await asyncio.to_thread(
+            _YOUTUBE_GATE.wait,
+            random.uniform(_YOUTUBE_GATE.min_interval, _YOUTUBE_GATE.max_interval),
+            0,
+        )
+        return await asyncio.to_thread(_download)
+    except Exception as exc:
+        logger.debug("yt-dlp transcript failed for %s: %s", video_id, exc)
+        return None
+
+
+def _vtt_to_text(content: str) -> str:
+    """Reduce a WebVTT caption file to deduplicated plain text."""
+    lines = []
+    previous = None
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line == "WEBVTT" or "-->" in line or line.isdigit():
+            continue
+        line = re.sub(r"<[^>]+>", "", line)
+        if line and line != previous:
+            lines.append(line)
+            previous = line
+    return " ".join(lines).strip()
 
 
 # ── Browser fallback ─────────────────────────────────────────────
@@ -409,7 +610,7 @@ class YouTubeAdapter(SiteAdapter):
         # Fetch transcript + description in parallel
         import asyncio
 
-        transcript = None
+        transcript: _TranscriptFetch | None = None
         description = None
         try:
             t_result: object
@@ -419,7 +620,7 @@ class YouTubeAdapter(SiteAdapter):
                 ctx.with_timeout(_fetch_description(video_id), timeout=10),
                 return_exceptions=True,
             )
-            if isinstance(t_result, str) and t_result:
+            if isinstance(t_result, _TranscriptFetch) and t_result.text:
                 transcript = t_result
             elif isinstance(t_result, AdapterError):
                 logger.debug("Transcript fetch failed: %s", t_result)
@@ -432,10 +633,13 @@ class YouTubeAdapter(SiteAdapter):
             logger.debug("Parallel fetch error for %s: %s", video_id, exc)
 
         if transcript:
+            metadata["transcript_language"] = transcript.language
+            if transcript.translated_to:
+                metadata["transcript_translated_to"] = transcript.translated_to
             logger.info(
                 "YouTube adapter: transcript hit for %s (%d chars)",
                 video_id,
-                len(transcript),
+                len(transcript.text),
             )
             title = oembed.get("title", "YouTube Video")
             author = oembed.get("author_name", "")
@@ -444,7 +648,7 @@ class YouTubeAdapter(SiteAdapter):
             if description:
                 desc_md = _description_to_markdown(description)
                 markdown += f"---\n\n## Description\n\n{desc_md}\n\n"
-            markdown += f"---\n\n## Transcript\n\n{transcript}"
+            markdown += f"---\n\n## Transcript\n\n{transcript.text}"
             return AdapterResult(
                 success=True,
                 markdown=markdown,

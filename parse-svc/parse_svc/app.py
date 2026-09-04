@@ -94,8 +94,8 @@ SUPPORTED_FORMATS = {
 # ---- Individual parsers ----
 
 
-def _parse_pdf(content: bytes, filename: str) -> dict:
-    """Parse PDF — try text extraction first, fall back to OCR."""
+def _parse_pdf(content: bytes, filename: str, ocr: str = "local") -> dict:
+    """Parse PDF locally first, with optional explicit hosted OCR."""
     markdown_parts = []
     metadata: dict[str, Any] = {"format": "pdf", "filename": filename}
     text_extracted = False
@@ -118,8 +118,8 @@ def _parse_pdf(content: bytes, filename: str) -> dict:
     except Exception as e:
         logger.warning("pypdf failed: %s", e)
 
-    # Tier 2: OCR for scanned PDFs (if pypdf got little or nothing)
-    if not text_extracted or len("".join(markdown_parts)) < 100:
+    # Tier 2: local OCR is the default; hosted mode is deliberately separate.
+    if ocr != "hosted" and (not text_extracted or len("".join(markdown_parts)) < 100):
         try:
             import pytesseract
             from pdf2image import convert_from_bytes
@@ -138,7 +138,7 @@ def _parse_pdf(content: bytes, filename: str) -> dict:
                 ocr_text = "\n\n".join(ocr_parts).strip()
                 if len(ocr_text) > 50:
                     markdown_parts = [ocr_text]
-                    metadata["extraction"] = "ocr"
+                    metadata["extraction"] = "local_ocr"
                     text_extracted = True
         except ImportError:
             logger.warning("pytesseract/pdf2image not available, skipping OCR")
@@ -167,7 +167,32 @@ def _parse_pdf(content: bytes, filename: str) -> dict:
     except Exception as e:
         logger.debug("Table extraction failed: %s", e)
 
-    return {"markdown": "\n\n".join(markdown_parts).strip(), "metadata": metadata}
+    markdown = "\n\n".join(markdown_parts).strip()
+    if ocr == "hosted" and not text_extracted:
+        api_url = os.getenv("PARSE_HOSTED_OCR_API_URL")
+        if not api_url:
+            raise HTTPException(
+                status_code=422,
+                detail="Hosted OCR is not configured; set PARSE_HOSTED_OCR_API_URL",
+            )
+        if not api_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail="Invalid hosted OCR API URL")
+        try:
+            api_key = os.getenv("PARSE_HOSTED_OCR_API_KEY") or os.getenv(
+                "FIRECRAWL_API_KEY"
+            )
+            kwargs = {"ocr": "hosted", "api_url": api_url}
+            if api_key:
+                kwargs["api_key"] = api_key
+            markdown = anydoc.to_markdown_bytes(content, **kwargs).strip()
+            metadata["extraction"] = "anydoc_hosted_ocr"
+        except anydoc.HostedError as e:
+            raise HTTPException(status_code=502, detail="Hosted OCR failed") from e
+        except anydoc.ConvertError as e:
+            raise HTTPException(
+                status_code=422, detail=f"Hosted OCR failed: {e}"
+            ) from e
+    return {"markdown": markdown, "metadata": metadata}
 
 
 def _parse_text(content: bytes, filename: str) -> dict:
@@ -224,7 +249,7 @@ async def metrics():
 
 
 @app.post("/parse", response_model=ParseResponse)
-async def parse_file(file: UploadFile):
+async def parse_file(file: UploadFile, ocr: str = "local"):
     """Upload a file and get its content as markdown."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
@@ -250,9 +275,15 @@ async def parse_file(file: UploadFile):
 
     logger.info("Parsing %s (%s, %d bytes)", file.filename, ext, len(content))
 
+    if ocr not in {"local", "hosted"}:
+        raise HTTPException(status_code=422, detail="ocr must be 'local' or 'hosted'")
+
     parser = PARSERS[ext]
     try:
-        result = parser(content, file.filename)
+        if ext == "pdf":
+            result = _parse_pdf(content, file.filename, ocr=ocr)
+        else:
+            result = parser(content, file.filename)
         md = result.get("markdown", "")
         meta = result.get("metadata", {})
         meta["size_bytes"] = len(content)

@@ -870,7 +870,35 @@ class TestCmdBatchScrape:
 
 
 class TestClientParseUpload:
-    """Tests for Client.parse_upload_file() and Client.parse_with_upload_id()."""
+    """Tests for direct and staged parse client requests."""
+
+    def test_parse_file_sends_explicit_hosted_ocr_mode(self, client, tmp_path):
+        """parse_file sends the opt-in OCR mode as multipart form data."""
+        document = tmp_path / "scan.pdf"
+        document.write_bytes(b"%PDF-1.4 fake scan")
+
+        def _fake_post(url, files=None, data=None, timeout=None):
+            assert "/parse" in url
+            assert files is not None
+            assert data == {"ocr": "hosted"}
+
+            class FakeResp:
+                status_code = 200
+
+                def json(self):
+                    return {
+                        "success": True,
+                        "data": {"markdown": "# Hosted scan"},
+                    }
+
+            return FakeResp()
+
+        import requests as _requests_module
+
+        with patch.object(_requests_module, "post", side_effect=_fake_post):
+            result = client.parse_file(str(document), ocr="hosted")
+
+        assert result["data"]["markdown"] == "# Hosted scan"
 
     def test_parse_upload_file_sends_correct_data(self, client):
         """parse_upload_file sends PUT with correct URL, headers, and body."""
