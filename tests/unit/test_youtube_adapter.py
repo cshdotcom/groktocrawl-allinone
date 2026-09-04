@@ -5,17 +5,34 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 sys.path.insert(0, "scraper-svc")
 
+from scraper.adapters import youtube as youtube_module
 from scraper.adapters.base import AdapterContext
-from scraper.adapters.youtube import (
-    YouTubeAdapter,
-    _fetch_transcript,
-    _TranscriptFetch,
-    _YouTubeRequestGate,
-)
 
 from tests.fixtures.youtube_transcript_twin import YouTubeTranscriptTwin
+
+
+@pytest.fixture(autouse=True)
+def _isolated_youtube_gate():
+    """Reset the module-global gate to env defaults around each test.
+
+    ``_YouTubeRequestGate`` is a process-wide singleton; tests that tune its
+    intervals (e.g. ``_run``) would otherwise leak state into later tests
+    (the ytdlp-twin test asserts default intervals) making the suite
+    order-dependent — and pollution can also arrive from earlier test
+    modules, so reset at setup, not only restore at teardown.
+    """
+    saved = dict(youtube_module._YOUTUBE_GATE.__dict__)
+    youtube_module._YOUTUBE_GATE.__dict__.clear()
+    youtube_module._YOUTUBE_GATE.__dict__.update(
+        youtube_module._YouTubeRequestGate().__dict__
+    )
+    yield
+    youtube_module._YOUTUBE_GATE.__dict__.clear()
+    youtube_module._YOUTUBE_GATE.__dict__.update(saved)
 
 
 class _Fetched:
@@ -53,19 +70,17 @@ class _Track:
 
 
 def _run(tracks):
-    from scraper.adapters import youtube
-
-    youtube._YOUTUBE_GATE.min_interval = 0
-    youtube._YOUTUBE_GATE.max_interval = 0
-    youtube._YOUTUBE_GATE.request_interval = 0
-    youtube._YOUTUBE_GATE.subtitle_interval = 0
-    youtube._YOUTUBE_GATE._cooldown_until = 0
+    youtube_module._YOUTUBE_GATE.min_interval = 0
+    youtube_module._YOUTUBE_GATE.max_interval = 0
+    youtube_module._YOUTUBE_GATE.request_interval = 0
+    youtube_module._YOUTUBE_GATE.subtitle_interval = 0
+    youtube_module._YOUTUBE_GATE._cooldown_until = 0
     api = SimpleNamespace(list=lambda _video_id: iter(tracks))
     with patch.dict(
         sys.modules,
         {"youtube_transcript_api": SimpleNamespace(YouTubeTranscriptApi=lambda: api)},
     ):
-        return asyncio.run(_fetch_transcript("PPM2ODdo2t8"))
+        return asyncio.run(youtube_module._fetch_transcript("PPM2ODdo2t8"))
 
 
 def test_native_english_is_preferred():
@@ -74,7 +89,7 @@ def test_native_english_is_preferred():
 
     result = _run([translated, native])
 
-    assert result == _TranscriptFetch("usable transcript", "en")
+    assert result == youtube_module._TranscriptFetch("usable transcript", "en")
     assert translated.fetch_calls == 0
 
 
@@ -85,7 +100,7 @@ def test_translatable_non_english_track_is_translated_to_english():
 
     result = _run([translated_track])
 
-    assert result == _TranscriptFetch("usable transcript", "fi", "en")
+    assert result == youtube_module._TranscriptFetch("usable transcript", "fi", "en")
     assert translated.fetch_calls == 1
 
 
@@ -103,7 +118,7 @@ def test_failed_preferred_track_falls_back_to_next_usable_track():
 
     result = _run([failed, fallback])
 
-    assert result == _TranscriptFetch("usable transcript", "en")
+    assert result == youtube_module._TranscriptFetch("usable transcript", "en")
 
 
 def test_scrape_exposes_translation_provenance():
@@ -118,11 +133,15 @@ def test_scrape_exposes_translation_provenance():
         ),
         patch(
             "scraper.adapters.youtube._fetch_transcript",
-            new=AsyncMock(return_value=_TranscriptFetch("translated text", "fi", "en")),
+            new=AsyncMock(
+                return_value=youtube_module._TranscriptFetch(
+                    "translated text", "fi", "en"
+                )
+            ),
         ),
     ):
         result = asyncio.run(
-            YouTubeAdapter().scrape(
+            youtube_module.YouTubeAdapter().scrape(
                 "https://www.youtube.com/watch?v=PPM2ODdo2t8", AdapterContext()
             )
         )
@@ -135,10 +154,8 @@ def test_scrape_exposes_translation_provenance():
 
 
 def test_vtt_to_text_removes_timing_and_repeated_cues():
-    from scraper.adapters.youtube import _vtt_to_text
-
     assert (
-        _vtt_to_text(
+        youtube_module._vtt_to_text(
             "WEBVTT\n\n00:00.000 --> 00:01.000\nHello\n\n00:01.000 --> 00:02.000\nHello\nworld"
         )
         == "Hello world"
@@ -148,7 +165,7 @@ def test_vtt_to_text_removes_timing_and_repeated_cues():
 def test_caption_twin_recovers_translation_omitted_by_transcript_api(monkeypatch):
     twin = YouTubeTranscriptTwin(monkeypatch)
     twin.install()
-    result = asyncio.run(_fetch_transcript(twin.video_id))
+    result = asyncio.run(youtube_module._fetch_transcript(twin.video_id))
     assert result is not None
     assert result.text == "Hello from translated caption"
     assert result.language == "fi"
@@ -161,7 +178,7 @@ def test_caption_twin_recovers_translation_omitted_by_transcript_api(monkeypatch
 
 
 def test_gate_enforces_cooldown_without_retrying_or_falling_back():
-    gate = _YouTubeRequestGate()
+    gate = youtube_module._YouTubeRequestGate()
     gate.cooldown_seconds = 60
     gate.mark_rate_limited()
     try:

@@ -1,6 +1,7 @@
 """Parse route handlers — file upload and content extraction."""
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -13,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PARSE_SVC_URL = "http://parse-svc:8013"
+# 单容器(all-in-one)内 parse-svc 固定监听 127.0.0.1:8013, 入口点亦导出同名
+# 环境变量; 外部实例用 PARSE_SVC_URL 覆盖。旧多镜像默认值 parse-svc:8013
+# 在单容器内不可解析(DNS Name not known → /v2/parse 500), 故必须从环境读取。
+PARSE_SVC_URL = os.environ.get("PARSE_SVC_URL", "http://127.0.0.1:8013")
 PARSE_UPLOAD_TTL = 3 * 60 * 60  # 3 hours, matches parse-svc/config.py
 
 # Lua script: atomically get and delete the upload data.
